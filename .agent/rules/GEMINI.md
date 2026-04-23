@@ -154,8 +154,10 @@ When user's prompt is NOT in English:
 | **MOBILE** (iOS, Android, RN, Flutter) | `mobile-developer`    | mobile-design                 |
 | **WEB** (Next.js, React web)           | `frontend-specialist` | frontend-design               |
 | **BACKEND** (API, server, DB)          | `backend-specialist`  | api-patterns, database-design |
+| **AI/ML** (PyTorch, TF, CV, NLP)       | `ai-mentor`           | python-patterns, clean-code   |
 
 > 🔴 **Mobile + frontend-specialist = WRONG.** Mobile = mobile-developer ONLY.
+> 🔴 **AI/ML project = ai-mentor ALWAYS.** See `.agent/rules/ai-mentor-rule.md` for auto-activation.
 
 ### 🛑 Socratic Gate
 
@@ -260,7 +262,7 @@ When user's prompt is NOT in English:
 
 ### Agents & Skills
 
-- **Masters**: `orchestrator`, `project-planner`, `security-auditor` (Cyber/Audit), `backend-specialist` (API/DB), `frontend-specialist` (UI/UX), `mobile-developer`, `debugger`, `game-developer`
+- **Masters**: `orchestrator`, `project-planner`, `security-auditor` (Cyber/Audit), `backend-specialist` (API/DB), `frontend-specialist` (UI/UX), `mobile-developer`, `debugger`, `game-developer`, `ai-mentor` (ML/CV/AI)
 - **Key Skills**: `clean-code`, `brainstorming`, `app-builder`, `frontend-design`, `mobile-design`, `plan-writing`, `behavioral-modes`
 
 ### Key Scripts
