@@ -17,33 +17,54 @@ LEARNING_RATE = 0.001
 EPOCHS = 10
 IMAGE_SIZE = 224 # Kích thước chuẩn cho MobileNet
 
+IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
+LABEL_CSV = "labels.csv"
+
+IMG_W, IMG_H = 178, 218
+
 class CelebADataset(Dataset):
-    def __init__(self, csv_file, img_dir):
-        # Giả sử bạn đã dùng Pandas gộp file txt thành file labels.csv
-        self.data_frame = pd.read_csv(csv_file) 
+    def __init__(self, csv_file: str, img_dir: str, partition: int):
+        """
+        Args:
+            partition: 0=train, 1=val, 2=test
+        """
+        df = pd.read_csv(csv_file)
+        df = df[df['partition'] == partition].reset_index(drop=True)
+
+        self.data = df
         self.img_dir = img_dir
 
-    def __len__(self):
-        return len(self.data_frame)
+    def __len__(self) -> int:
+        return len(self.data)
 
-    def __getitem__(self, idx):
-        # Đọc tên file ảnh và nhãn từ file CSV
-        img_name = os.path.join(self.img_dir, self.data_frame.iloc[idx, 0])
-        image = cv2.imread(img_name)
-        
-        # Đổi kích thước ảnh về 224x224 và chuẩn hóa (chia 255)
+    def __getitem__(self, idx: int):
+        row = self.data.iloc[idx]
+        # --- Load ảnh ---
+        img_path = os.path.join(self.img_dir, row['image_id'])
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (IMAGE_SIZE, IMAGE_SIZE))
         image = image.astype(np.float32) / 255.0
-        
-        # PyTorch yêu cầu định dạng (Kênh màu, Chiều cao, Chiều rộng)
         image = np.transpose(image, (2, 0, 1))
         
-        # Lấy nhãn (giả sử cột 1 là class, 2-5 là bbox, 6-15 là 5 điểm)
-        class_label = np.array([self.data_frame.iloc[idx, 1]], dtype=np.float32)
-        bbox = self.data_frame.iloc[idx, 2:6].values.astype(np.float32)
-        landmarks = self.data_frame.iloc[idx, 6:16].values.astype(np.float32)
+        # --- Landmarks (Task 1.5: normalize về [0,1]) ---
+        landmark_raw = row[['lefteye_x','lefteye_y',
+                             'righteye_x','righteye_y',
+                             'nose_x','nose_y',
+                             'leftmouth_x','leftmouth_y',
+                             'rightmouth_x','rightmouth_y']].values.astype(np.float32)
+                             
+        landmarks = landmark_raw.copy()
+        landmarks[0::2] /= IMG_W  # x coords
+        landmarks[1::2] /= IMG_H  # y coords
 
-        return torch.tensor(image), (torch.tensor(class_label), torch.tensor(bbox), torch.tensor(landmarks))
+        # --- Label: face = 1 (tất cả ảnh trong CelebA đều có mặt) ---
+        class_label = np.array([1.0], dtype=np.float32)
+        
+        return (
+            torch.tensor(image),
+            (torch.tensor(class_label), torch.tensor(landmarks))
+        )
 
 # ==========================================
 # 3. KIẾN TRÚC MÔ HÌNH (MODEL)
@@ -86,44 +107,37 @@ def train_model():
     criterion_reg = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     
-    # Khởi tạo DataLoader (Bạn cần thay đường dẫn thực tế trên máy mình)
-    # dataset = CelebADataset(csv_file='labels.csv', img_dir='img_align_celeba/')
-    # dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=0)
+    val_dataset   = CelebADataset(LABEL_CSV, IMG_DIR, partition=1)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  num_workers=0)
+    val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
     
     print("Bắt đầu huấn luyện...")
     for epoch in range(EPOCHS):
-        # Dòng này mô phỏng vòng lặp dataloader (khi bạn chạy thật hãy bỏ comment ở trên)
-        # for images, (class_labels, bboxes, landmarks) in dataloader:
-            
-            # --- MÔ PHỎNG DỮ LIỆU ĐỂ BẠN CHẠY THỬ CODE KHÔNG LỖI ---
-            images = torch.rand(BATCH_SIZE, 3, IMAGE_SIZE, IMAGE_SIZE).to(device)
-            class_labels = torch.randint(0, 2, (BATCH_SIZE, 1)).float().to(device)
-            bboxes = torch.rand(BATCH_SIZE, 4).to(device)
-            landmarks = torch.rand(BATCH_SIZE, 10).to(device)
-            # -----------------------------------------------------
+        model.train()
+        total_loss = 0.0
 
-            # 1. Làm sạch đạo hàm
+        for images, (class_labels, landmarks) in train_loader:
+
+            images       = images.to(device)
+            class_labels = class_labels.to(device)
+            landmarks    = landmarks.to(device)
+
             optimizer.zero_grad()
-            
-            # 2. Lan truyền xuôi (Forward)
-            pred_class, pred_bbox, pred_landmark = model(images)
-            
-            # 3. Tính Loss tổng hợp
-            loss_class = criterion_class(pred_class, class_labels)
-            loss_bbox = criterion_reg(pred_bbox, bboxes)
-            loss_landmark = criterion_reg(pred_landmark, landmarks)
-            
-            # Bạn có thể nhân thêm hệ số nếu muốn ưu tiên nhánh nào hơn
-            loss_total = loss_class + loss_bbox + loss_landmark 
-            
-            # 4. Lan truyền ngược (Backward)
+            class_out, _, landmark_out = model(images)    
+
+            loss_class    = criterion_class(class_out, class_labels)
+            loss_landmark = criterion_reg(landmark_out, landmarks)
+            loss_total    = loss_class + loss_landmark
+
             loss_total.backward()
-            
-            # 5. Cập nhật trọng số
             optimizer.step()
-            
-            # In ra màn hình quá trình học
-            print(f"Epoch [{epoch+1}/{EPOCHS}] | Tổng Loss: {loss_total.item():.4f}")
+            total_loss += loss_total.item()
+
+        avg_loss = total_loss / len(train_loader)
+        print(f"Epoch [{epoch+1}/{EPOCHS}] | Loss: {avg_loss:.4f}")
+
 
     # Lưu trí khôn
     torch.save(model.state_dict(), 'face_detect_model.pth')
