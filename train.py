@@ -8,11 +8,12 @@ import numpy as np
 import pandas as pd
 import random
 import os
+from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Đang sử dụng thiết bị: {device}")
 
-BATCH_SIZE = 16  #4GB VRAM
+BATCH_SIZE = 32#4GB VRAM
 LEARNING_RATE = 0.001
 EPOCHS = 10
 IMAGE_SIZE = 224 # Kích thước chuẩn cho MobileNet
@@ -118,14 +119,15 @@ def train_model():
         model.train()
         total_loss = 0.0
 
-        for images, (class_labels, landmarks) in train_loader:
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", unit="batch")
+        for images, (class_labels, landmarks) in pbar:
 
             images       = images.to(device)
             class_labels = class_labels.to(device)
             landmarks    = landmarks.to(device)
 
             optimizer.zero_grad()
-            class_out, _, landmark_out = model(images)    
+            class_out, _, landmark_out = model(images)
 
             loss_class    = criterion_class(class_out, class_labels)
             loss_landmark = criterion_reg(landmark_out, landmarks)
@@ -135,13 +137,34 @@ def train_model():
             optimizer.step()
             total_loss += loss_total.item()
 
+            # Update progress bar với loss hiện tại
+            pbar.set_postfix(loss=f"{loss_total.item():.4f}")
+
         avg_loss = total_loss / len(train_loader)
-        print(f"Epoch [{epoch+1}/{EPOCHS}] | Loss: {avg_loss:.4f}")
+
+        # --- VALIDATION ---
+        model.eval()
+        val_loss = 0.0
+
+        with torch.no_grad():
+            for images, (class_labels, landmarks) in val_loader:
+                images       = images.to(device)
+                class_labels = class_labels.to(device)
+                landmarks    = landmarks.to(device)
+
+                class_out, _, landmark_out = model(images)
+
+                loss_class    = criterion_class(class_out, class_labels)
+                loss_landmark = criterion_reg(landmark_out, landmarks)
+                val_loss     += (loss_class + loss_landmark).item()
+
+        avg_val_loss = val_loss / len(val_loader)
+        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.4f} | Val: {avg_val_loss:.4f}")
 
 
     # Lưu trí khôn
-    torch.save(model.state_dict(), 'face_detect_model.pth')
-    print("Đã lưu mô hình thành công vào file 'face_detect_model.pth'!")
+    torch.save(model.state_dict(), 'face_detect_model_withval.pth')
+    print("Đã lưu mô hình thành công vào file 'face_detect_model_withval.pth'!")
 
 if __name__ == '__main__':
     train_model()
