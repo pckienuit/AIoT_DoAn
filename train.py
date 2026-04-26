@@ -56,8 +56,51 @@ LEARNING_RATE = 0.001
 EPOCHS = 10
 IMAGE_SIZE = 224 # Kích thước chuẩn cho MobileNet
 
-IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
-LABEL_CSV = "labels.csv"
+# Auto-detect: Kaggle (/kaggle/input) hoặc local
+def _find_kaggle_paths(root: str):
+    """
+    Scan đệ quy trong /kaggle/input để tìm:
+      - labels.csv
+      - thư mục img_align_celeba chứa ảnh .jpg
+    Trả về (label_csv_path, img_dir_path) hoặc raise nếu không tìm thấy.
+    """
+    label_csv = img_dir = None
+    for dirpath, dirnames, filenames in os.walk(root):
+        if label_csv is None and "labels.csv" in filenames:
+            label_csv = os.path.join(dirpath, "labels.csv")
+        if img_dir is None and os.path.basename(dirpath) == "img_align_celeba":
+            img_dir = dirpath
+        if label_csv and img_dir:
+            break
+
+    if label_csv is None:
+        raise FileNotFoundError(
+            f"Khong tim thay labels.csv trong {root}\n"
+            f"Cau truc hien tai:\n" +
+            "\n".join(f"  {dp}" for dp, _, _ in os.walk(root))
+        )
+    if img_dir is None:
+        raise FileNotFoundError(
+            f"Khong tim thay thu muc img_align_celeba trong {root}"
+        )
+    # CelebA gốc có cấu trúc 2 cấp: img_align_celeba/img_align_celeba/
+    # Nếu bên trong còn một img_align_celeba nữa thì dùng cấp trong
+    nested = os.path.join(img_dir, "img_align_celeba")
+    if os.path.isdir(nested):
+        img_dir = nested
+    return label_csv, img_dir
+
+
+_KAGGLE_INPUT = "/kaggle/input"
+if os.path.exists(_KAGGLE_INPUT):
+    LABEL_CSV, IMG_DIR = _find_kaggle_paths(_KAGGLE_INPUT)
+    MODEL_OUT = "/kaggle/working/face_detect_model_withval2.pth"
+    print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
+    print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
+else:
+    IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
+    LABEL_CSV = "labels.csv"
+    MODEL_OUT = "face_detect_model_withval2.pth"
 
 IMG_W, IMG_H = 178, 218
 
@@ -205,12 +248,12 @@ def train_model():
                 val_loss     += (loss_class + loss_landmark).item()
 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.6f} | Val: {avg_val_loss:.6f}")
+        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.8f} | Val: {avg_val_loss:.8f}")
 
 
     # Lưu trí khôn
-    torch.save(model.state_dict(), 'face_detect_model_withval2.pth')
-    print("Đã lưu mô hình thành công vào file 'face_detect_model_withval.pth2'!")
+    torch.save(model.state_dict(), MODEL_OUT)
+    print(f"Da luu mo hinh thanh cong vao '{MODEL_OUT}'")
 
 if __name__ == '__main__':
     train_model()
