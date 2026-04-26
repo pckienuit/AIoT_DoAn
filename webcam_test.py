@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from train import FaceDetectMultiTask, IMAGE_SIZE
 
-MODEL_PATH     = "face_detect_model_withval2.pth"
+MODEL_PATH     = "face_detect_model_withval3.pth"
 HAAR_PATH      = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]
@@ -47,11 +47,11 @@ def run_webcam(model: FaceDetectMultiTask) -> None:
     detector = cv2.CascadeClassifier(HAAR_PATH)
 
     if not cap.isOpened():
-        print("Không mở được webcam!")
+        print("Cannot open webcam!")
         return
 
-    print("Webcam chạy — nhấn Q để thoát")
-    print("Bước 1: Haar Cascade detect mặt  |  Bước 2: MobileNetV2 predict landmarks")
+    print("Webcam running -- press Q to quit")
+    print("Step 1: Haar Cascade detect face  |  Step 2: MobileNetV2 predict landmarks")
 
     while True:
         ret, frame = cap.read()
