@@ -53,10 +53,12 @@ def augment_color_jitter(image: np.ndarray,
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-BATCH_SIZE = 32#4GB VRAM
-LEARNING_RATE = 0.001
-EPOCHS = 30
-IMAGE_SIZE = 224 # Kích thước chuẩn cho MobileNet
+BATCH_SIZE = 32           # 4GB VRAM
+LEARNING_RATE = 0.001     # 0.001 for scratch; 0.0003 for fine-tuning
+EPOCHS = 50
+EARLY_STOP_PATIENCE = 12  # more patience for fine-tuning
+LM_LOSS_WEIGHT = 10.0     # landmark regression priority (5->10)
+IMAGE_SIZE = 224
 
 # Auto-detect: Kaggle (/kaggle/input) hoặc local
 def _find_kaggle_paths(root: str):
@@ -96,13 +98,16 @@ def _find_kaggle_paths(root: str):
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
     LABEL_CSV, IMG_DIR = _find_kaggle_paths(_KAGGLE_INPUT)
-    MODEL_OUT = "/kaggle/working/face_detect_model_withval2.pth"
+    MODEL_OUT   = "/kaggle/working/face_detect_model_withval7.pth"
+    # Resume from checkpoint if available; None = train from scratch.
+    RESUME_FROM = None  # withval5 deleted — training from scratch
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
-    IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
-    LABEL_CSV = "labels.csv"
-    MODEL_OUT = "face_detect_model_withval2.pth"
+    IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
+    LABEL_CSV   = "labels.csv"
+    MODEL_OUT   = "face_detect_model_withval7.pth"
+    RESUME_FROM = "face_detect_model_withval5.pth"
 
 IMG_W, IMG_H = 178, 218
 
@@ -116,35 +121,77 @@ class CelebADataset(Dataset):
         df = pd.read_csv(csv_file)
         df = df[df['partition'] == partition].reset_index(drop=True)
 
-        self.data    = df
-        self.img_dir = img_dir
-        self.augment = augment
+        self.data      = df
+        self.img_dir   = img_dir
+        self.augment   = augment
+        # For val/test: negative sampling is deterministic per index.
+        # For train:    True random (augment=True implies stochastic).
+        self.deterministic_neg = not augment
 
     def __len__(self) -> int:
         return len(self.data)
 
-    def _generate_negative_crop(self, image_full: np.ndarray, bbox_raw: np.ndarray) -> np.ndarray:
+    def _generate_negative_crop(
+        self,
+        image_full: np.ndarray,
+        bbox_raw: np.ndarray,
+        rng: random.Random | None = None,
+    ) -> np.ndarray:
+        """Random background crop with <10% face overlap.
+
+        Args:
+            rng: If provided (val/test), use this seeded RNG so the crop is
+                 identical across epochs -> stable val_loss.
+                 If None (train), use the global random module.
+        """
+        _ri = rng.randint if rng else random.randint
         H, W, _ = image_full.shape
         bx, by, bw, bh = int(bbox_raw[0]), int(bbox_raw[1]), int(bbox_raw[2]), int(bbox_raw[3])
-        
+
         for _ in range(10):
-            crop_size = random.randint(40, min(W, H) // 2)
-            cx = random.randint(0, W - crop_size)
-            cy = random.randint(0, H - crop_size)
-            
+            crop_size = _ri(40, max(40, min(W, H) // 2))
+            cx = _ri(0, max(0, W - crop_size))
+            cy = _ri(0, max(0, H - crop_size))
+
             inter_x1 = max(cx, bx)
             inter_y1 = max(cy, by)
             inter_x2 = min(cx + crop_size, bx + bw)
             inter_y2 = min(cy + crop_size, by + bh)
-            
+
             if inter_x1 < inter_x2 and inter_y1 < inter_y2:
                 inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
-                if inter_area < (crop_size * crop_size * 0.1): 
+                if inter_area < (crop_size * crop_size * 0.1):
                     return image_full[cy:cy+crop_size, cx:cx+crop_size]
             else:
                 return image_full[cy:cy+crop_size, cx:cx+crop_size]
-                
+
         return image_full[0:30, 0:30]
+
+    def _make_crop(self, image_full: np.ndarray, bx: float, by: float,
+                   bw: float, bh: float):
+        """Simulate inference pipeline: expand face BBox by 2.14x with zero-pad."""
+        CROP_SCALE = 2.14
+        CROP_AR    = 1.22  # 218/178 CelebA aspect ratio
+
+        crop_w = max(10, int(bw * CROP_SCALE))
+        crop_h = max(10, int(crop_w * CROP_AR))
+        crop_x = int(bx + bw / 2 - crop_w / 2)
+        crop_y = int(by + bh * 0.4 - crop_h * 0.51)  # eye alignment
+
+        H, W = image_full.shape[:2]
+        face_crop = np.zeros((crop_h, crop_w, 3), dtype=np.uint8)
+
+        src_x1, src_y1 = max(0, crop_x),          max(0, crop_y)
+        src_x2, src_y2 = min(W, crop_x + crop_w), min(H, crop_y + crop_h)
+        dst_x1 = max(0, -crop_x)
+        dst_y1 = max(0, -crop_y)
+        dst_x2 = dst_x1 + (src_x2 - src_x1)
+        dst_y2 = dst_y1 + (src_y2 - src_y1)
+
+        if src_x2 > src_x1 and src_y2 > src_y1:
+            face_crop[dst_y1:dst_y2, dst_x1:dst_x2] = image_full[src_y1:src_y2, src_x1:src_x2]
+
+        return face_crop, crop_x, crop_y, crop_w, crop_h
 
     def __getitem__(self, idx: int):
         row = self.data.iloc[idx]
@@ -156,19 +203,27 @@ class CelebADataset(Dataset):
         
         bbox_raw = row[['x_1', 'y_1', 'width', 'height']].values.astype(np.float32)
 
-        # 20% xac suat la Negative Sample (random that su)
-        is_negative = (random.random() < 0.2)
-        
+        # 20% chance of negative sample.
+        # Val/test: fully deterministic per index (same is_negative AND same crop
+        # geometry every epoch) -> truly stable val_loss.
+        if self.deterministic_neg:
+            rng = random.Random(idx)           # fixed seed covers ALL randomness below
+            is_negative = (rng.random() < 0.2)
+        else:
+            rng = None
+            is_negative = (random.random() < 0.2)
+
         if is_negative:
-            crop = self._generate_negative_crop(image_full, bbox_raw)
+            # Pass rng so crop coordinates are also deterministic for val/test.
+            crop = self._generate_negative_crop(image_full, bbox_raw, rng=rng)
             image = cv2.resize(crop, (IMAGE_SIZE, IMAGE_SIZE))
             image = image.astype(np.float32) / 255.0
-            
+
             if self.augment:
                 image = augment_color_jitter(image)
                 if random.random() < 0.5:
                     image = image[:, ::-1, :].copy()
-                    
+
             image = np.transpose(image, (2, 0, 1))
             class_label = np.array([0.0], dtype=np.float32)
             bbox = np.zeros(4, dtype=np.float32)
@@ -178,25 +233,28 @@ class CelebADataset(Dataset):
                 (torch.tensor(class_label), torch.tensor(bbox), torch.tensor(landmarks))
             )
 
-        image = cv2.resize(image_full, (IMAGE_SIZE, IMAGE_SIZE))
-        image = image.astype(np.float32) / 255.0  # shape (H,W,C) float32
+        # --- Positive: simulate inference crop pipeline ---
+        bx, by, bw, bh = bbox_raw
+        face_crop, crop_x, crop_y, crop_w, crop_h = self._make_crop(image_full, bx, by, bw, bh)
+        image = cv2.resize(face_crop, (IMAGE_SIZE, IMAGE_SIZE)).astype(np.float32) / 255.0
 
-        # --- BBox: normalize to [0,1] ---
-        bbox = bbox_raw.copy()
-        bbox[0] /= IMG_W
-        bbox[2] /= IMG_W
-        bbox[1] /= IMG_H
-        bbox[3] /= IMG_H
+        # BBox normalized within the crop (same coordinate system as inference)
+        bbox = np.array([
+            np.clip((bx - crop_x) / crop_w, 0.0, 1.0),
+            np.clip((by - crop_y) / crop_h, 0.0, 1.0),
+            np.clip(bw / crop_w, 0.0, 1.0),
+            np.clip(bh / crop_h, 0.0, 1.0),
+        ], dtype=np.float32)
 
-        # --- Landmarks: normalize to [0,1] ---
+        # Landmarks normalized within the crop
         landmark_raw = row[['lefteye_x',  'lefteye_y',
                              'righteye_x', 'righteye_y',
                              'nose_x',     'nose_y',
                              'leftmouth_x','leftmouth_y',
                              'rightmouth_x','rightmouth_y']].values.astype(np.float32)
-        landmarks = landmark_raw.copy()
-        landmarks[0::2] /= IMG_W  # x coords
-        landmarks[1::2] /= IMG_H  # y coords
+        landmarks = np.zeros(10, dtype=np.float32)
+        landmarks[0::2] = np.clip((landmark_raw[0::2] - crop_x) / crop_w, 0.0, 1.0)
+        landmarks[1::2] = np.clip((landmark_raw[1::2] - crop_y) / crop_h, 0.0, 1.0)
 
         # --- Augmentation (train only) ---
         if self.augment:
@@ -246,10 +304,17 @@ class FaceDetectMultiTask(nn.Module):
 # 4. KHỞI TẠO & HUẤN LUYỆN
 # ==========================================
 def train_model():
-    # Khoi tao mo hinh va day len GPU
     model = FaceDetectMultiTask().to(device)
-    
-    # Multi-GPU: Dung DataParallel neu co nhieu GPU (Kaggle Dual T4)
+
+    # Resume from checkpoint (fine-tune) if configured.
+    if RESUME_FROM and os.path.isfile(RESUME_FROM):
+        state = torch.load(RESUME_FROM, map_location=device)
+        model.load_state_dict(state)
+        print(f"[Resume] Loaded weights from '{RESUME_FROM}'")
+    else:
+        print("[Train] Starting from scratch (ImageNet pretrained backbone).")
+
+    # Multi-GPU: DataParallel for Kaggle Dual T4.
     if torch.cuda.device_count() > 1:
         print(f"[Multi-GPU] Su dung {torch.cuda.device_count()} GPUs!")
         model = nn.DataParallel(model)
@@ -258,9 +323,12 @@ def train_model():
     criterion_class = nn.BCEWithLogitsLoss()
     criterion_reg = nn.SmoothL1Loss() # SmoothL1Loss ổn định hơn MSE cho regression
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    
-    # Scheduler: Giam LR sau moi 7 epoch (gamma=0.3 de khong giam qua manh)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.3)
+
+    # CosineAnnealingLR: smooth LR decay, avoids the aggressive StepLR drops.
+    # eta_min keeps a small residual LR so training doesn't stall completely.
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=EPOCHS, eta_min=1e-5
+    )
     
     train_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=0, augment=True)
     val_dataset   = CelebADataset(LABEL_CSV, IMG_DIR, partition=1, augment=False)
@@ -270,9 +338,10 @@ def train_model():
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False, num_workers=n_workers, pin_memory=True)
     print(f"Train: {len(train_dataset)} (augment=True) | Val: {len(val_dataset)}")
     
-    print("Bắt đầu huấn luyện...")
-    best_val_loss = float('inf')
-    
+    print("Bat dau huan luyen...")
+    best_val_loss  = float('inf')
+    patience_count = 0
+
     for epoch in range(EPOCHS):
         model.train()
         total_loss = 0.0
@@ -299,8 +368,8 @@ def train_model():
                 loss_bbox     = torch.tensor(0.0, device=device)
                 loss_landmark = torch.tensor(0.0, device=device)
                 
-            # Weighted Loss: Ưu tiên học tọa độ hơn (vì Classification dễ học hơn)
-            loss_total    = loss_class * 1.0 + loss_bbox * 5.0 + loss_landmark * 5.0
+            # Weighted loss: landmark weight raised to LM_LOSS_WEIGHT for better NME.
+            loss_total = loss_class * 1.0 + loss_bbox * 5.0 + loss_landmark * LM_LOSS_WEIGHT
 
             loss_total.backward()
             optimizer.step()
@@ -339,22 +408,28 @@ def train_model():
                     loss_bbox     = torch.tensor(0.0, device=device)
                     loss_landmark = torch.tensor(0.0, device=device)
                     
-                # Tính val_loss theo cùng trọng số để so sánh khách quan
-                val_loss     += (loss_class * 1.0 + loss_bbox * 5.0 + loss_landmark * 5.0).item()
+                # Same weights as train for fair comparison.
+                val_loss += (loss_class * 1.0 + loss_bbox * 5.0 + loss_landmark * LM_LOSS_WEIGHT).item()
 
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.8f} | Val: {avg_val_loss:.8f}")
+        current_lr   = optimizer.param_groups[0]['lr']
+        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.8f} | Val: {avg_val_loss:.8f} | LR: {current_lr:.6f}")
 
-        # Luu mo hinh tot nhat (Best Model)
+        # Save best model
         if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            # Luu model.module khi dung DataParallel de tranh prefix 'module.'
+            best_val_loss  = avg_val_loss
+            patience_count = 0
             state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
             torch.save(state, MODEL_OUT)
-            print(f"--> Da luu model tot nhat voi val_loss: {best_val_loss:.8f}")
+            print(f"--> Saved best model | val_loss: {best_val_loss:.8f}")
+        else:
+            patience_count += 1
+            print(f"    No improvement ({patience_count}/{EARLY_STOP_PATIENCE})")
+            if patience_count >= EARLY_STOP_PATIENCE:
+                print(f"Early stopping triggered at epoch {epoch+1}.")
+                break
 
-
-    print(f"Ket thuc huan luyen. Model tot nhat da duoc luu tai '{MODEL_OUT}'")
+    print(f"Training done. Best model saved at '{MODEL_OUT}'")
 
 if __name__ == '__main__':
     train_model()

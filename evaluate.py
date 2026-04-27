@@ -10,20 +10,20 @@ Metrics:
 
 import torch
 import numpy as np
-import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from train import FaceDetectMultiTask, CelebADataset, IMAGE_SIZE, IMG_DIR, LABEL_CSV, IMG_W, IMG_H
+from train import FaceDetectMultiTask, CelebADataset, IMAGE_SIZE, IMG_DIR, LABEL_CSV
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_PATH  = "face_detect_model_withval2.pth"
+MODEL_PATH  = "face_detect_model_withval5.pth"
 BATCH_SIZE  = 64
 NUM_WORKERS = 0
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]
+NME_MIN_IOD_NORM = 0.05
 
 # Interocular distance dùng để normalize NME:
 # = khoảng cách giữa 2 mắt (lefteye, righteye) → index 0,1 và 2,3 trong lm vector
@@ -44,15 +44,28 @@ def interocular_distance(lm_gt: np.ndarray) -> float:
     return float(np.sqrt((rx - lx) ** 2 + (ry - ly) ** 2))
 
 
-def denormalize(lm_norm: np.ndarray) -> np.ndarray:
+def denormalize_to_input_px(lm_norm: np.ndarray) -> np.ndarray:
     """
-    Chuyển landmarks từ [0,1] → pixel.
-    lm_norm shape: (10,) — x ở chỉ số chẵn, y ở chỉ số lẻ
+    Chuyển landmarks từ [0,1] → pixel trong hệ tọa độ input IMAGE_SIZE x IMAGE_SIZE.
+    lm_norm shape: (10,) — x ở chỉ số chẵn, y ở chỉ số lẻ.
     """
-    lm_px = lm_norm.copy()
-    lm_px[0::2] *= IMG_W
-    lm_px[1::2] *= IMG_H
+    lm_px = np.clip(lm_norm, 0.0, 1.0).copy()
+    lm_px[0::2] *= IMAGE_SIZE
+    lm_px[1::2] *= IMAGE_SIZE
     return lm_px
+
+
+def is_clean_gt_sample(lm_gt_norm: np.ndarray) -> bool:
+    """GT hợp lệ để tính NME: không bị clip biên và có IOD đủ lớn."""
+    if np.any((lm_gt_norm <= 0.0) | (lm_gt_norm >= 1.0)):
+        return False
+    iod_norm = float(
+        np.hypot(
+            lm_gt_norm[LEYE_IDX[0]] - lm_gt_norm[REYE_IDX[0]],
+            lm_gt_norm[LEYE_IDX[1]] - lm_gt_norm[REYE_IDX[1]],
+        )
+    )
+    return iod_norm >= NME_MIN_IOD_NORM
 
 
 # ---------------------------------------------------------------------------
@@ -78,12 +91,27 @@ def evaluate(model_path: str) -> None:
     # Accumulators
     correct_class   = 0
     total_samples   = 0
+    positive_samples = 0
+    clean_nme_samples = 0
     per_lm_errors   = np.zeros(5)   # MAE theo pixel cho từng landmark
+    nme_all_sum     = 0.0
+    nme_all_count   = 0
     nme_sum         = 0.0
     nme_count       = 0
 
     with torch.no_grad():
-        for images, (class_labels, landmarks_gt) in tqdm(test_loader, desc="Evaluating"):
+        for images, targets in tqdm(test_loader, desc="Evaluating"):
+            # Dataset hiện tại trả về (class_labels, bboxes, landmarks).
+            # Giữ tương thích nếu gặp format cũ chỉ có (class_labels, landmarks).
+            if isinstance(targets, (list, tuple)) and len(targets) == 3:
+                class_labels, _, landmarks_gt = targets
+            elif isinstance(targets, (list, tuple)) and len(targets) == 2:
+                class_labels, landmarks_gt = targets
+            else:
+                raise ValueError(
+                    f"Unsupported target format from DataLoader: type={type(targets)}"
+                )
+
             images       = images.to(device)
             class_labels = class_labels.to(device)   # shape (B,1)
             landmarks_gt = landmarks_gt.to(device)    # shape (B,10)
@@ -98,10 +126,16 @@ def evaluate(model_path: str) -> None:
             # ---- Landmark metrics (per sample) ----
             lm_pred_np = landmark_out.cpu().numpy()   # (B,10)
             lm_gt_np   = landmarks_gt.cpu().numpy()   # (B,10)
+            cls_np     = class_labels.cpu().numpy().reshape(-1)
 
             for i in range(lm_pred_np.shape[0]):
-                pred_px = denormalize(lm_pred_np[i])
-                gt_px   = denormalize(lm_gt_np[i])
+                # Chỉ đánh giá landmark/NME trên positive samples (có mặt thật).
+                if cls_np[i] < 0.5:
+                    continue
+
+                positive_samples += 1
+                pred_px = denormalize_to_input_px(lm_pred_np[i])
+                gt_px   = denormalize_to_input_px(lm_gt_np[i])
 
                 # Per-landmark absolute error (Euclidean distance, pixel)
                 for j in range(5):
@@ -109,9 +143,21 @@ def evaluate(model_path: str) -> None:
                     dy = pred_px[j*2 + 1] - gt_px[j*2 + 1]
                     per_lm_errors[j] += np.sqrt(dx**2 + dy**2)
 
-                # NME
+                # NME all-positive (chỉ bỏ sample có iod quá nhỏ để tránh chia 0).
                 iod = interocular_distance(gt_px)
-                if iod > 1e-6:   # tránh chia 0
+                if iod > 1.0:
+                    mean_err_px = np.mean([
+                        np.sqrt((pred_px[j*2] - gt_px[j*2])**2 +
+                                (pred_px[j*2+1] - gt_px[j*2+1])**2)
+                        for j in range(5)
+                    ])
+                    nme_all_sum += mean_err_px / iod
+                    nme_all_count += 1
+
+                # NME chỉ tính trên mẫu GT sạch để tránh chia bởi IOD gần 0.
+                gt_norm = np.clip(lm_gt_np[i], 0.0, 1.0)
+                if is_clean_gt_sample(gt_norm):
+                    clean_nme_samples += 1
                     mean_err_px = np.mean([
                         np.sqrt((pred_px[j*2] - gt_px[j*2])**2 +
                                 (pred_px[j*2+1] - gt_px[j*2+1])**2)
@@ -124,15 +170,19 @@ def evaluate(model_path: str) -> None:
     # Report
     # ---------------------------------------------------------------------------
     acc = correct_class / total_samples * 100
+    nme_all = (nme_all_sum / nme_all_count) * 100 if nme_all_count else float("nan")
     nme = (nme_sum / nme_count) * 100 if nme_count else float("nan")
-    per_lm_mae = per_lm_errors / total_samples
+    per_lm_mae = per_lm_errors / positive_samples if positive_samples else np.zeros(5)
 
     print("=" * 55)
     print("         KẾT QUẢ ĐÁNH GIÁ TRÊN TEST SET")
     print("=" * 55)
     print(f"  Tổng mẫu test         : {total_samples:,}")
+    print(f"  Mẫu positive (landmark): {positive_samples:,}")
+    print(f"  Mẫu clean cho NME      : {clean_nme_samples:,}")
     print(f"  Classification Accuracy: {acc:.2f}%")
-    print(f"  NME (% interocular)   : {nme:.2f}%")
+    print(f"  NME (% interocular) all+: {nme_all:.2f}%  (all positive)")
+    print(f"  NME (% interocular) clean: {nme:.2f}%  (clean subset)")
     print("-" * 55)
     print("  Per-Landmark Error (pixel Euclidean):")
     for j, name in enumerate(LANDMARK_NAMES):

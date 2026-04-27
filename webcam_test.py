@@ -3,13 +3,19 @@ import torch
 import numpy as np
 from train import FaceDetectMultiTask, IMAGE_SIZE
 
-MODEL_PATH     = "face_detect_model_withval3.pth"
+MODEL_PATH     = "face_detect_model_withval5.pth"
 HAAR_PATH      = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]
-COLOR_BOX      = (255, 200, 0)
-COLOR_LM       = (0, 255, 0)
-COLOR_TEXT     = (0, 255, 255)
+COLOR_HAAR     = (255, 0, 0)      # Blue: Haar Cascade box
+COLOR_CROP     = (255, 200, 0)    # Cyan: crop region sent to model
+COLOR_BBOX     = (0, 255, 0)      # Green: model predicted BBox
+COLOR_LM       = (0, 220, 255)    # Yellow: landmarks
+COLOR_TEXT     = (255, 255, 255)  # White: text
+
+# EMA smoothing: 0.0 = frozen, 1.0 = no smoothing
+BBOX_ALPHA = 0.25  # Low alpha -> very smooth but slightly lagged
+LM_ALPHA   = 0.35
 
 
 def load_model(path: str) -> FaceDetectMultiTask:
@@ -19,27 +25,38 @@ def load_model(path: str) -> FaceDetectMultiTask:
     return model
 
 
-def predict_landmarks(model: FaceDetectMultiTask, face_crop: np.ndarray) -> np.ndarray:
-    """Nhận BGR face crop → trả về landmarks shape (10,) đã denormalize về [0,1]."""
+def predict_face(model: FaceDetectMultiTask, face_crop: np.ndarray):
+    """BGR face crop -> (class_score float, bbox [4], landmarks [10]) all normalized [0,1]."""
     rgb     = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
     resized = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE)).astype(np.float32) / 255.0
     tensor  = torch.tensor(resized.transpose(2, 0, 1)).unsqueeze(0)
     with torch.no_grad():
-        _, _, landmark_out = model(tensor)
-    return landmark_out.numpy()[0]  # shape (10,)
+        cls_out, bbox_out, lm_out = model(tensor)
+    cls_score = torch.sigmoid(cls_out).item()
+    bbox      = bbox_out.numpy()[0]   # [x, y, w, h] normalized
+    landmarks = lm_out.numpy()[0]     # [10] normalized
+    return cls_score, bbox, landmarks
 
 
-def draw_landmarks_on_crop(frame: np.ndarray, lm: np.ndarray,
-                            x: int, y: int, w: int, h: int) -> None:
-    """Vẽ 5 landmarks lên frame gốc, trong vùng bbox (x,y,w,h)."""
+def draw_landmarks(frame: np.ndarray, lm: np.ndarray,
+                   x: int, y: int, w: int, h: int) -> None:
+    """Draw 5 landmarks on the full frame, offset by crop origin (x, y)."""
     for i, name in enumerate(LANDMARK_NAMES):
-        # lm[i*2], lm[i*2+1] là tọa độ [0,1] TRONG crop
-        # → scale về pixel của crop → offset về frame
         px = int(lm[i * 2]     * w) + x
         py = int(lm[i * 2 + 1] * h) + y
-        cv2.circle(frame, (px, py), 4, COLOR_LM, -1)
+        cv2.circle(frame, (px, py), 5, COLOR_LM, -1)
         cv2.putText(frame, name, (px + 5, py - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.3, COLOR_TEXT, 1)
+
+
+def draw_bbox(frame: np.ndarray, bbox: np.ndarray,
+              crop_x: int, crop_y: int, crop_w: int, crop_h: int) -> None:
+    """Draw model's predicted BBox (normalized to crop) onto the full frame."""
+    bx = int(bbox[0] * crop_w) + crop_x
+    by = int(bbox[1] * crop_h) + crop_y
+    bw = int(bbox[2] * crop_w)
+    bh = int(bbox[3] * crop_h)
+    cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), COLOR_BBOX, 2)
 
 
 def run_webcam(model: FaceDetectMultiTask) -> None:
@@ -52,6 +69,9 @@ def run_webcam(model: FaceDetectMultiTask) -> None:
 
     print("Webcam running -- press Q to quit")
     print("Step 1: Haar Cascade detect face  |  Step 2: MobileNetV2 predict landmarks")
+
+    ema_bbox: np.ndarray | None = None  # EMA state for BBox
+    ema_lm:   np.ndarray | None = None  # EMA state for Landmarks
 
     while True:
         ret, frame = cap.read()
@@ -99,13 +119,38 @@ def run_webcam(model: FaceDetectMultiTask) -> None:
 
                 face_crop[dst_y1:dst_y2, dst_x1:dst_x2] = frame[src_y1:src_y2, src_x1:src_x2]
 
-                # Vẽ box để debug
-                cv2.rectangle(frame, (fx, fy), (fx+fw, fy+fh), (255, 0, 0), 1)
-                cv2.rectangle(frame, (crop_x, crop_y), (crop_x+crop_w, crop_y+crop_h), COLOR_BOX, 2)
+                # Draw boxes
+                cv2.rectangle(frame, (fx, fy), (fx+fw, fy+fh), COLOR_HAAR, 1)  # Haar
+                cv2.rectangle(frame, (crop_x, crop_y), (crop_x+crop_w, crop_y+crop_h), COLOR_CROP, 1)  # Crop
 
-                # 4. Predict và vẽ landmarks
-                lm = predict_landmarks(model, face_crop)
-                draw_landmarks_on_crop(frame, lm, crop_x, crop_y, crop_w, crop_h)
+                # 4. Predict & draw
+                cls_score, bbox, lm = predict_face(model, face_crop)
+
+                # EMA smoothing: reduces per-frame jitter significantly
+                if ema_bbox is None:
+                    ema_bbox = bbox.copy()
+                    ema_lm   = lm.copy()
+                else:
+                    ema_bbox = BBOX_ALPHA * bbox + (1 - BBOX_ALPHA) * ema_bbox
+                    ema_lm   = LM_ALPHA   * lm   + (1 - LM_ALPHA)   * ema_lm
+
+                # Only draw Model BBox if model is confident (face detected)
+                if cls_score > 0.5:
+                    draw_bbox(frame, ema_bbox, crop_x, crop_y, crop_w, crop_h)
+
+                draw_landmarks(frame, ema_lm, crop_x, crop_y, crop_w, crop_h)
+
+                # Confidence label
+                cv2.putText(frame, f"face: {cls_score:.2f}", (fx, fy - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_BBOX, 1)
+            else:
+                # Reset EMA when no face detected
+                ema_bbox = None
+                ema_lm   = None
+
+        # Legend
+        cv2.putText(frame, "Blue=Haar  Cyan=Crop  Green=ModelBBox", (5, frame.shape[0] - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
 
         cv2.imshow("2-Stage Pipeline: Detect → Landmark  (Q to quit)", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
