@@ -9,6 +9,11 @@ import pandas as pd
 import random
 import os
 from tqdm import tqdm
+import gc
+
+# Tránh rò rỉ RAM (CPU) do đa luồng của OpenCV kết hợp với DataLoader
+cv2.setNumThreads(0)
+cv2.ocl.setUseOpenCL(False)
 
 # ---------------------------------------------------------------------------
 # Augmentation helpers
@@ -30,6 +35,46 @@ def augment_hflip(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray):
     bbox[0] = 1.0 - (bbox[0] + bbox[2])
     return image, landmarks, bbox
 
+
+def augment_rotate_and_scale(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray, angle_max=20, scale_range=(0.8, 1.2)):
+    """
+    Simulates 3D-like poses (tilt, zoom) by rotating and scaling in 2D.
+    """
+    h, w = image.shape[:2]
+    angle = random.uniform(-angle_max, angle_max)
+    scale = random.uniform(*scale_range)
+    
+    # Calculate rotation matrix
+    center = (w // 2, h // 2)
+    M = cv2.getRotationMatrix2D(center, angle, scale)
+    
+    # Transform image
+    image = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+    
+    # Transform landmarks
+    # landmarks shape (10,) -> points shape (5, 2)
+    pts = landmarks.reshape(5, 2) * [w, h]
+    # Add ones for affine transformation: [x, y, 1]
+    pts_ones = np.hstack([pts, np.ones((5, 1))])
+    new_pts = M.dot(pts_ones.T).T
+    new_landmarks = (new_pts / [w, h]).flatten()
+    
+    # Transform bbox (approximate by transforming 4 corners and taking min/max)
+    bx, by, bw, bh = bbox
+    corners = np.array([
+        [bx, by], [bx+bw, by], [bx, by+bh], [bx+bw, by+bh]
+    ]) * [w, h]
+    corners_ones = np.hstack([corners, np.ones((4, 1))])
+    new_corners = M.dot(corners_ones.T).T
+    new_corners = new_corners / [w, h]
+    
+    new_bx = np.min(new_corners[:, 0])
+    new_by = np.min(new_corners[:, 1])
+    new_bw = np.max(new_corners[:, 0]) - new_bx
+    new_bh = np.max(new_corners[:, 1]) - new_by
+    new_bbox = np.array([new_bx, new_by, new_bw, new_bh], dtype=np.float32)
+
+    return image, np.clip(new_landmarks, 0, 1), np.clip(new_bbox, 0, 1)
 
 def augment_color_jitter(image: np.ndarray,
                          brightness: float = 0.3,
@@ -53,11 +98,12 @@ def augment_color_jitter(image: np.ndarray,
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-BATCH_SIZE = 32           # 4GB VRAM
-LEARNING_RATE = 0.001     # 0.001 for scratch; 0.0003 for fine-tuning
-EPOCHS = 50
-EARLY_STOP_PATIENCE = 12  # more patience for fine-tuning
-LM_LOSS_WEIGHT = 10.0     # landmark regression priority (5->10)
+BATCH_SIZE = 128          # Tăng lên 128 vì Kaggle có 2 GPU T4 (mỗi cái 16GB)
+LEARNING_RATE = 0.0001    # Lower LR for fine-tuning with complex augmentation
+EPOCHS = 60               # More epochs to learn hard cases
+EARLY_STOP_PATIENCE = 15  # More patience with stable LR
+LM_LOSS_WEIGHT = 25.0     # Strong focus on landmark precision
+GRAD_CLIP_NORM = 1.0      # Gradient clipping to prevent spike instability
 IMAGE_SIZE = 224
 
 # Auto-detect: Kaggle (/kaggle/input) hoặc local
@@ -98,16 +144,16 @@ def _find_kaggle_paths(root: str):
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
     LABEL_CSV, IMG_DIR = _find_kaggle_paths(_KAGGLE_INPUT)
-    MODEL_OUT   = "/kaggle/working/face_detect_model_withval7.pth"
+    MODEL_OUT   = "/kaggle/working/face_detect_model_withval10.pth"
     # Resume from checkpoint if available; None = train from scratch.
-    RESUME_FROM = None  # withval5 deleted — training from scratch
+    RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_withval9.pth" # Cập nhật đường dẫn Kaggle nếu cần
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
     IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
     LABEL_CSV   = "labels.csv"
-    MODEL_OUT   = "face_detect_model_withval7.pth"
-    RESUME_FROM = "face_detect_model_withval5.pth"
+    MODEL_OUT   = "face_detect_model_withval10.pth"
+    RESUME_FROM = "face_detect_model_withval9.pth"
 
 IMG_W, IMG_H = 178, 218
 
@@ -260,6 +306,11 @@ class CelebADataset(Dataset):
         if self.augment:
             if random.random() < 0.5:
                 image, landmarks, bbox = augment_hflip(image, landmarks, bbox)
+            
+            # Simulate 3D-like poses (tilt/scale)
+            if random.random() < 0.7:
+                image, landmarks, bbox = augment_rotate_and_scale(image, landmarks, bbox)
+                
             image = augment_color_jitter(image)
 
         # HWC -> CHW
@@ -332,8 +383,8 @@ def train_model():
     
     train_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=0, augment=True)
     val_dataset   = CelebADataset(LABEL_CSV, IMG_DIR, partition=1, augment=False)
-    # Tăng num_workers để tải data song song với GPU đang train
-    n_workers = min(4, os.cpu_count() or 0)
+    # Rút n_workers xuống 2 để tránh tràn CPU RAM trên Kaggle
+    n_workers = min(2, os.cpu_count() or 0)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  num_workers=n_workers, pin_memory=True)
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False, num_workers=n_workers, pin_memory=True)
     print(f"Train: {len(train_dataset)} (augment=True) | Val: {len(val_dataset)}")
@@ -372,6 +423,8 @@ def train_model():
             loss_total = loss_class * 1.0 + loss_bbox * 5.0 + loss_landmark * LM_LOSS_WEIGHT
 
             loss_total.backward()
+            # Clip gradients to prevent spikes when landmark weight is high.
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
             optimizer.step()
             total_loss += loss_total.item()
 
@@ -428,6 +481,9 @@ def train_model():
             if patience_count >= EARLY_STOP_PATIENCE:
                 print(f"Early stopping triggered at epoch {epoch+1}.")
                 break
+                
+    # Dọn rác RAM CPU sau mỗi epoch
+        gc.collect()
 
     print(f"Training done. Best model saved at '{MODEL_OUT}'")
 

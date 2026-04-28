@@ -15,10 +15,14 @@ from tqdm import tqdm
 
 from train import FaceDetectMultiTask, CelebADataset, IMAGE_SIZE, IMG_DIR, LABEL_CSV
 
+import sys
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_PATH  = "face_detect_model_withval5.pth"
+MODEL_PATH  = "face_detect_model_withval8.pth"
+if len(sys.argv) > 1:
+    MODEL_PATH = sys.argv[1]
 BATCH_SIZE  = 64
 NUM_WORKERS = 0
 
