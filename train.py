@@ -36,7 +36,7 @@ def augment_hflip(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray):
     return image, landmarks, bbox
 
 
-def augment_rotate_and_scale(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray, angle_max=20, scale_range=(0.8, 1.2)):
+def augment_rotate_and_scale(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray, angle_max=10, scale_range=(0.9, 1.1)):
     """
     Simulates 3D-like poses (tilt, zoom) by rotating and scaling in 2D.
     """
@@ -98,12 +98,13 @@ def augment_color_jitter(image: np.ndarray,
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-BATCH_SIZE = 128          # Tăng lên 128 vì Kaggle có 2 GPU T4 (mỗi cái 16GB)
-LEARNING_RATE = 0.0001    # Lower LR for fine-tuning with complex augmentation
-EPOCHS = 60               # More epochs to learn hard cases
-EARLY_STOP_PATIENCE = 15  # More patience with stable LR
-LM_LOSS_WEIGHT = 25.0     # Strong focus on landmark precision
-GRAD_CLIP_NORM = 1.0      # Gradient clipping to prevent spike instability
+BATCH_SIZE = 128          # Kaggle Dual T4 (16GB each)
+LEARNING_RATE = 0.00002   # Very conservative for fine-tuning (2e-5) — withval12
+EPOCHS = 80               # More room to converge (was 60)
+EARLY_STOP_PATIENCE = 20  # More patience — let landmark loss keep improving (was 15)
+LM_LOSS_WEIGHT = 10.0     # Keep SAME as withval9 to preserve loss landscape
+GRAD_CLIP_NORM = 1.0      # Gradient clipping for stability
+WARMUP_EPOCHS = 3         # Linear warmup from LR/10 → LR when resuming
 IMAGE_SIZE = 224
 
 # Auto-detect: Kaggle (/kaggle/input) hoặc local
@@ -144,15 +145,15 @@ def _find_kaggle_paths(root: str):
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
     LABEL_CSV, IMG_DIR = _find_kaggle_paths(_KAGGLE_INPUT)
-    MODEL_OUT   = "/kaggle/working/face_detect_model_withval10.pth"
-    # Resume from checkpoint if available; None = train from scratch.
-    RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_withval9.pth" # Cập nhật đường dẫn Kaggle nếu cần
+    MODEL_OUT   = "/kaggle/working/face_detect_model_withval12.pth"
+    # Resume from withval9 (best NME=8.70%) — withval11 regressed vs withval9.
+    RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_withval9.pth"
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
     IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
     LABEL_CSV   = "labels.csv"
-    MODEL_OUT   = "face_detect_model_withval10.pth"
+    MODEL_OUT   = "face_detect_model_withval12.pth"
     RESUME_FROM = "face_detect_model_withval9.pth"
 
 IMG_W, IMG_H = 178, 218
@@ -307,8 +308,8 @@ class CelebADataset(Dataset):
             if random.random() < 0.5:
                 image, landmarks, bbox = augment_hflip(image, landmarks, bbox)
             
-            # Simulate 3D-like poses (tilt/scale)
-            if random.random() < 0.7:
+            # Mild rotation/scale: 20% chance, small angle to avoid landmark clipping
+            if random.random() < 0.2:
                 image, landmarks, bbox = augment_rotate_and_scale(image, landmarks, bbox)
                 
             image = augment_color_jitter(image)
@@ -357,11 +358,36 @@ class FaceDetectMultiTask(nn.Module):
 def train_model():
     model = FaceDetectMultiTask().to(device)
 
-    # Resume from checkpoint (fine-tune) if configured.
+    # Hàm mất mát và Bộ tối ưu hóa
+    criterion_class = nn.BCEWithLogitsLoss()
+    criterion_reg = nn.SmoothL1Loss() # SmoothL1Loss ổn định hơn MSE cho regression
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # CosineAnnealingLR: smooth LR decay, avoids the aggressive StepLR drops.
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=EPOCHS, eta_min=1e-6
+    )
+
+    start_epoch    = 0
+    best_val_loss  = float('inf')
+    resumed        = False
+
+    # Resume from checkpoint (full state if available, else weights only).
     if RESUME_FROM and os.path.isfile(RESUME_FROM):
-        state = torch.load(RESUME_FROM, map_location=device)
-        model.load_state_dict(state)
-        print(f"[Resume] Loaded weights from '{RESUME_FROM}'")
+        checkpoint = torch.load(RESUME_FROM, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            # Full checkpoint — restore everything
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch   = checkpoint.get('epoch', 0)
+            best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+            print(f"[Resume] Full checkpoint from '{RESUME_FROM}' (epoch {start_epoch}, best_val={best_val_loss:.6f})")
+        else:
+            # Legacy: weights-only .pth — load model, mark for warmup
+            model.load_state_dict(checkpoint)
+            resumed = True
+            print(f"[Resume] Weights-only from '{RESUME_FROM}' (warmup {WARMUP_EPOCHS} epochs)")
     else:
         print("[Train] Starting from scratch (ImageNet pretrained backbone).")
 
@@ -369,17 +395,6 @@ def train_model():
     if torch.cuda.device_count() > 1:
         print(f"[Multi-GPU] Su dung {torch.cuda.device_count()} GPUs!")
         model = nn.DataParallel(model)
-    
-    # Hàm mất mát và Bộ tối ưu hóa
-    criterion_class = nn.BCEWithLogitsLoss()
-    criterion_reg = nn.SmoothL1Loss() # SmoothL1Loss ổn định hơn MSE cho regression
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
-    # CosineAnnealingLR: smooth LR decay, avoids the aggressive StepLR drops.
-    # eta_min keeps a small residual LR so training doesn't stall completely.
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=EPOCHS, eta_min=1e-5
-    )
     
     train_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=0, augment=True)
     val_dataset   = CelebADataset(LABEL_CSV, IMG_DIR, partition=1, augment=False)
@@ -390,15 +405,23 @@ def train_model():
     print(f"Train: {len(train_dataset)} (augment=True) | Val: {len(val_dataset)}")
     
     print("Bat dau huan luyen...")
-    best_val_loss  = float('inf')
     patience_count = 0
 
-    for epoch in range(EPOCHS):
+    for epoch in range(start_epoch, EPOCHS):
         model.train()
         total_loss = 0.0
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", unit="batch")
-        for images, (class_labels, bboxes, landmarks) in pbar:
+        # Linear warmup: ramp LR from LR/10 → LR over WARMUP_EPOCHS
+        # Only applies when loading weights-only (no optimizer state).
+        if resumed and epoch < WARMUP_EPOCHS:
+            warmup_lr = LEARNING_RATE * (epoch + 1) / WARMUP_EPOCHS
+            for pg in optimizer.param_groups:
+                pg['lr'] = warmup_lr
+            print(f"  [Warmup] Epoch {epoch+1}/{WARMUP_EPOCHS} | LR = {warmup_lr:.6f}")
+
+        is_kaggle = os.path.exists(_KAGGLE_INPUT)
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", unit="batch", disable=is_kaggle)
+        for i, (images, (class_labels, bboxes, landmarks)) in enumerate(pbar):
 
             images       = images.to(device)
             class_labels = class_labels.to(device)
@@ -429,11 +452,15 @@ def train_model():
             total_loss += loss_total.item()
 
             # Update progress bar với chi tiết từng loại loss
-            pbar.set_postfix(
-                cls=f"{loss_class.item():.4f}",
-                box=f"{loss_bbox.item():.4f}",
-                lm=f"{loss_landmark.item():.4f}"
-            )
+            if is_kaggle:
+                if i % 50 == 0:
+                    print(f"  Batch {i}/{len(train_loader)} | Loss: {loss_total.item():.4f} (cls:{loss_class.item():.4f}, box:{loss_bbox.item():.4f}, lm:{loss_landmark.item():.4f})")
+            else:
+                pbar.set_postfix(
+                    cls=f"{loss_class.item():.4f}",
+                    box=f"{loss_bbox.item():.4f}",
+                    lm=f"{loss_landmark.item():.4f}"
+                )
 
         scheduler.step() # Cập nhật Learning Rate
         avg_loss = total_loss / len(train_loader)
@@ -468,13 +495,21 @@ def train_model():
         current_lr   = optimizer.param_groups[0]['lr']
         print(f"Epoch [{epoch+1}/{EPOCHS}] | Train: {avg_loss:.8f} | Val: {avg_val_loss:.8f} | LR: {current_lr:.6f}")
 
-        # Save best model
+        # Save best model — full checkpoint for proper resume later
         if avg_val_loss < best_val_loss:
             best_val_loss  = avg_val_loss
             patience_count = 0
-            state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-            torch.save(state, MODEL_OUT)
-            print(f"--> Saved best model | val_loss: {best_val_loss:.8f}")
+            model_state = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+            torch.save({
+                'model_state_dict': model_state,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'epoch': epoch + 1,
+                'best_val_loss': best_val_loss,
+            }, MODEL_OUT)
+            # Also save weights-only for inference/evaluate.py compatibility
+            torch.save(model_state, MODEL_OUT.replace('.pth', '_weights.pth'))
+            print(f"--> Saved best model | val_loss: {best_val_loss:.8f} | epoch: {epoch+1}")
         else:
             patience_count += 1
             print(f"    No improvement ({patience_count}/{EARLY_STOP_PATIENCE})")

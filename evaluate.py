@@ -79,12 +79,19 @@ def evaluate(model_path: str) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Thiết bị: {device}")
 
-    # Load model
+    # Load model — supports both full checkpoint and weights-only .pth
     model = FaceDetectMultiTask()
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint = torch.load(model_path, map_location=device)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        epoch = checkpoint.get('epoch', '?')
+        val   = checkpoint.get('best_val_loss', '?')
+        print(f"Đã load full checkpoint từ '{model_path}' (epoch={epoch}, val_loss={val})")
+    else:
+        model.load_state_dict(checkpoint)
+        print(f"Đã load weights-only từ '{model_path}'")
     model.to(device)
     model.eval()
-    print(f"Đã load model từ '{model_path}'")
 
     # Test dataset (partition=2)
     test_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=2)
@@ -103,8 +110,11 @@ def evaluate(model_path: str) -> None:
     nme_sum         = 0.0
     nme_count       = 0
 
+    import os
+    is_kaggle = os.path.exists("/kaggle/input")
     with torch.no_grad():
-        for images, targets in tqdm(test_loader, desc="Evaluating"):
+        pbar = tqdm(test_loader, desc="Evaluating", disable=is_kaggle)
+        for images, targets in pbar:
             # Dataset hiện tại trả về (class_labels, bboxes, landmarks).
             # Giữ tương thích nếu gặp format cũ chỉ có (class_labels, landmarks).
             if isinstance(targets, (list, tuple)) and len(targets) == 3:

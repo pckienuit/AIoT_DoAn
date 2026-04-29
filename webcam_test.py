@@ -20,7 +20,11 @@ LM_ALPHA   = 0.35
 
 def load_model(path: str) -> FaceDetectMultiTask:
     model = FaceDetectMultiTask()
-    model.load_state_dict(torch.load(path, map_location="cpu"))
+    checkpoint = torch.load(path, map_location="cpu")
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
     model.eval()
     return model
 

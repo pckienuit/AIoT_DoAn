@@ -10,7 +10,11 @@ def test_inference(model_path, num_images=3):
     print(f"Using device: {device}")
 
     model = FaceDetectMultiTask()
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint = torch.load(model_path, map_location=device)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
     model.to(device)
     model.eval()
 
