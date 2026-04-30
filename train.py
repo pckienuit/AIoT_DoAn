@@ -98,23 +98,18 @@ def augment_color_jitter(image: np.ndarray,
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-BATCH_SIZE = 128          # Kaggle Dual T4 (16GB each)
-LEARNING_RATE = 0.00002   # Very conservative for fine-tuning (2e-5) — withval12
-EPOCHS = 80               # More room to converge (was 60)
-EARLY_STOP_PATIENCE = 20  # More patience — let landmark loss keep improving (was 15)
-LM_LOSS_WEIGHT = 10.0     # Keep SAME as withval9 to preserve loss landscape
-GRAD_CLIP_NORM = 1.0      # Gradient clipping for stability
-WARMUP_EPOCHS = 3         # Linear warmup from LR/10 → LR when resuming
+BATCH_SIZE = 64           # Giảm batch size cho VPS (RAM 15GB, CPU 20 cores)
+LEARNING_RATE = 5e-5      # Tăng LR nhẹ, dùng AdamW để chống overfit
+EPOCHS = 60               
+EARLY_STOP_PATIENCE = 15  
+LM_LOSS_WEIGHT = 10.0     
+GRAD_CLIP_NORM = 1.0      
+WARMUP_EPOCHS = 3         
 IMAGE_SIZE = 224
 
-# Auto-detect: Kaggle (/kaggle/input) hoặc local
-def _find_kaggle_paths(root: str):
-    """
-    Scan đệ quy trong /kaggle/input để tìm:
-      - labels.csv
-      - thư mục img_align_celeba chứa ảnh .jpg
-    Trả về (label_csv_path, img_dir_path) hoặc raise nếu không tìm thấy.
-    """
+# Auto-detect: Kaggle (/kaggle/input) hoặc local/VPS
+def _find_dataset_paths(root: str):
+    """Scan đệ quy tìm labels.csv và thư mục img_align_celeba."""
     label_csv = img_dir = None
     for dirpath, dirnames, filenames in os.walk(root):
         if label_csv is None and "labels.csv" in filenames:
@@ -124,36 +119,29 @@ def _find_kaggle_paths(root: str):
         if label_csv and img_dir:
             break
 
-    if label_csv is None:
-        raise FileNotFoundError(
-            f"Khong tim thay labels.csv trong {root}\n"
-            f"Cau truc hien tai:\n" +
-            "\n".join(f"  {dp}" for dp, _, _ in os.walk(root))
-        )
-    if img_dir is None:
-        raise FileNotFoundError(
-            f"Khong tim thay thu muc img_align_celeba trong {root}"
-        )
-    # CelebA gốc có cấu trúc 2 cấp: img_align_celeba/img_align_celeba/
-    # Nếu bên trong còn một img_align_celeba nữa thì dùng cấp trong
-    nested = os.path.join(img_dir, "img_align_celeba")
-    if os.path.isdir(nested):
-        img_dir = nested
+    # Fix lồng thư mục:
+    if img_dir:
+        nested = os.path.join(img_dir, "img_align_celeba")
+        if os.path.isdir(nested):
+            img_dir = nested
     return label_csv, img_dir
-
 
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
-    LABEL_CSV, IMG_DIR = _find_kaggle_paths(_KAGGLE_INPUT)
-    MODEL_OUT   = "/kaggle/working/face_detect_model_withval12.pth"
-    # Resume from withval9 (best NME=8.70%) — withval11 regressed vs withval9.
+    LABEL_CSV, IMG_DIR = _find_dataset_paths(_KAGGLE_INPUT)
+    MODEL_OUT   = "/kaggle/working/face_detect_model_vps_finetune.pth"
     RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_withval9.pth"
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
-    IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
-    LABEL_CSV   = "labels.csv"
-    MODEL_OUT   = "face_detect_model_withval12.pth"
+    # Trên VPS hoặc Local
+    LABEL_CSV, IMG_DIR = _find_dataset_paths(".")
+    if not LABEL_CSV or not IMG_DIR:
+        print("[Warning] Không tìm thấy dataset tự động. Đang dùng path mặc định.")
+        IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
+        LABEL_CSV   = "labels.csv"
+    
+    MODEL_OUT   = "face_detect_model_vps_finetune.pth"
     RESUME_FROM = "face_detect_model_withval9.pth"
 
 IMG_W, IMG_H = 178, 218
@@ -361,7 +349,9 @@ def train_model():
     # Hàm mất mát và Bộ tối ưu hóa
     criterion_class = nn.BCEWithLogitsLoss()
     criterion_reg = nn.SmoothL1Loss() # SmoothL1Loss ổn định hơn MSE cho regression
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    
+    # Dùng AdamW với weight_decay (L2 regularization) giúp mô hình không bị overfit, cải thiện NME
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
 
     # CosineAnnealingLR: smooth LR decay, avoids the aggressive StepLR drops.
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
@@ -398,8 +388,9 @@ def train_model():
     
     train_dataset = CelebADataset(LABEL_CSV, IMG_DIR, partition=0, augment=True)
     val_dataset   = CelebADataset(LABEL_CSV, IMG_DIR, partition=1, augment=False)
-    # Rút n_workers xuống 2 để tránh tràn CPU RAM trên Kaggle
-    n_workers = min(2, os.cpu_count() or 0)
+    
+    # Tăng n_workers cho VPS (vì VPS này có 20 cores)
+    n_workers = min(8, os.cpu_count() or 0)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,  num_workers=n_workers, pin_memory=True)
     val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False, num_workers=n_workers, pin_memory=True)
     print(f"Train: {len(train_dataset)} (augment=True) | Val: {len(val_dataset)}")
