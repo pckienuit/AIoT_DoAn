@@ -107,21 +107,23 @@ def wing_loss(pred: torch.Tensor, target: torch.Tensor,
              w: float = 10.0, eps: float = 2.0) -> torch.Tensor:
     """
     Wing Loss (Feng et al., CVPR 2018).
-      w  : bán kính của vùng tuyến tính (mặc định 10)
-      eps: hằng số kiểm soát độ cong của log (mặc định 2)
+    FIX BUG: Tọa độ ở dải [0, 1] nên x rất nhỏ (luôn < w=10), khiến Wing Loss bị thoái hóa 
+    thành L1 Loss. Phải scale lỗi lên pixel (VD: 224) để log curve hoạt động đúng.
     """
-    x   = (pred - target).abs()
-    C   = w - w * math.log(1.0 + w / eps)   # hằng số dịch pha
+    SCALE = 224.0
+    x = (pred * SCALE - target * SCALE).abs()
+    C = w - w * math.log(1.0 + w / eps)
+    
     loss = torch.where(x < w,
                        w * torch.log(1.0 + x / eps),
                        x - C)
-    return loss.mean()
+    return loss.mean() / SCALE
 
 BATCH_SIZE = 64           # Giảm batch size cho VPS (RAM 15GB, CPU 20 cores)
-LEARNING_RATE = 2e-5      # Giảm LR để fine-tune tiếp
-EPOCHS = 40               
+LEARNING_RATE = 1e-5      # LR cực nhỏ để "vắt kiệt" NME
+EPOCHS = 30               
 EARLY_STOP_PATIENCE = 15  
-LM_LOSS_WEIGHT = 20.0     # Tập trung mạnh vào Landmark Loss
+LM_LOSS_WEIGHT = 15.0     # Mức 15 là đủ vì Wing Loss đã được sửa lỗi scale
 GRAD_CLIP_NORM = 1.0      
 WARMUP_EPOCHS = 3         
 IMAGE_SIZE = 224
@@ -148,8 +150,8 @@ def _find_dataset_paths(root: str):
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
     LABEL_CSV, IMG_DIR = _find_dataset_paths(_KAGGLE_INPUT)
-    MODEL_OUT   = "/kaggle/working/face_detect_model_vps_finetune_v3.pth"
-    RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_vps_finetune_v2.pth"
+    MODEL_OUT   = "/kaggle/working/face_detect_model_vps_finetune_v4.pth"
+    RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_vps_finetune_v3.pth"
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
@@ -160,8 +162,8 @@ else:
         IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
         LABEL_CSV   = "labels.csv"
     
-    MODEL_OUT   = "face_detect_model_vps_finetune_v3.pth"
-    RESUME_FROM = "face_detect_model_vps_finetune_v2.pth"
+    MODEL_OUT   = "face_detect_model_vps_finetune_v4.pth"
+    RESUME_FROM = "face_detect_model_vps_finetune_v3.pth"
 
 IMG_W, IMG_H = 178, 218
 
@@ -222,7 +224,7 @@ class CelebADataset(Dataset):
         return image_full[0:30, 0:30]
 
     def _make_crop(self, image_full: np.ndarray, bx: float, by: float,
-                   bw: float, bh: float):
+                   bw: float, bh: float, augment_shift: bool = False):
         """Simulate inference pipeline: expand face BBox by 2.14x with zero-pad."""
         CROP_SCALE = 2.14
         CROP_AR    = 1.22  # 218/178 CelebA aspect ratio
@@ -231,6 +233,11 @@ class CelebADataset(Dataset):
         crop_h = max(10, int(crop_w * CROP_AR))
         crop_x = int(bx + bw / 2 - crop_w / 2)
         crop_y = int(by + bh * 0.4 - crop_h * 0.51)  # eye alignment
+
+        if augment_shift:
+            # Shift ngẫu nhiên lên đến 5% kích thước crop để giả lập translation
+            crop_x += int(random.uniform(-0.05, 0.05) * crop_w)
+            crop_y += int(random.uniform(-0.05, 0.05) * crop_h)
 
         H, W = image_full.shape[:2]
         face_crop = np.zeros((crop_h, crop_w, 3), dtype=np.uint8)
@@ -289,7 +296,7 @@ class CelebADataset(Dataset):
 
         # --- Positive: simulate inference crop pipeline ---
         bx, by, bw, bh = bbox_raw
-        face_crop, crop_x, crop_y, crop_w, crop_h = self._make_crop(image_full, bx, by, bw, bh)
+        face_crop, crop_x, crop_y, crop_w, crop_h = self._make_crop(image_full, bx, by, bw, bh, augment_shift=self.augment)
         image = cv2.resize(face_crop, (IMAGE_SIZE, IMAGE_SIZE)).astype(np.float32) / 255.0
 
         # BBox normalized within the crop (same coordinate system as inference)
