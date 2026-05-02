@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torchvision.models as models
@@ -27,106 +28,91 @@ _FLIP_PAIRS = [(0, 2), (1, 3), (6, 8), (7, 9)]  # index pairs to swap on H-flip
 
 def augment_hflip(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray):
     """Horizontal flip image (H,W,C) + mirror landmarks and bbox in-place."""
-    image = image[:, ::-1, :].copy()          # flip along width axis
+    image = image[:, ::-1, :].copy()
     landmarks = landmarks.copy()
-    landmarks[0::2] = 1.0 - landmarks[0::2]  # mirror all x coords
-    for a, b in _FLIP_PAIRS:                  # swap left↔right pairs
+    landmarks[0::2] = 1.0 - landmarks[0::2]
+    for a, b in _FLIP_PAIRS:
         landmarks[a], landmarks[b] = landmarks[b], landmarks[a]
     bbox = bbox.copy()
     bbox[0] = 1.0 - (bbox[0] + bbox[2])
     return image, landmarks, bbox
 
 
-def augment_rotate_and_scale(image: np.ndarray, landmarks: np.ndarray, bbox: np.ndarray, angle_max=10, scale_range=(0.9, 1.1)):
-    """
-    Simulates 3D-like poses (tilt, zoom) by rotating and scaling in 2D.
-    """
-    h, w = image.shape[:2]
-    angle = random.uniform(-angle_max, angle_max)
-    scale = random.uniform(*scale_range)
-    
-    # Calculate rotation matrix
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, scale)
-    
-    # Transform image
-    image = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
-    
-    # Transform landmarks
-    # landmarks shape (10,) -> points shape (5, 2)
-    pts = landmarks.reshape(5, 2) * [w, h]
-    # Add ones for affine transformation: [x, y, 1]
-    pts_ones = np.hstack([pts, np.ones((5, 1))])
-    new_pts = M.dot(pts_ones.T).T
-    new_landmarks = (new_pts / [w, h]).flatten()
-    
-    # Transform bbox (approximate by transforming 4 corners and taking min/max)
-    bx, by, bw, bh = bbox
-    corners = np.array([
-        [bx, by], [bx+bw, by], [bx, by+bh], [bx+bw, by+bh]
-    ]) * [w, h]
-    corners_ones = np.hstack([corners, np.ones((4, 1))])
-    new_corners = M.dot(corners_ones.T).T
-    new_corners = new_corners / [w, h]
-    
-    new_bx = np.min(new_corners[:, 0])
-    new_by = np.min(new_corners[:, 1])
-    new_bw = np.max(new_corners[:, 0]) - new_bx
-    new_bh = np.max(new_corners[:, 1]) - new_by
-    new_bbox = np.array([new_bx, new_by, new_bw, new_bh], dtype=np.float32)
-
-    return image, np.clip(new_landmarks, 0, 1), np.clip(new_bbox, 0, 1)
-
 def augment_color_jitter(image: np.ndarray,
-                         brightness: float = 0.3,
-                         contrast: float = 0.3,
-                         saturation: float = 0.2) -> np.ndarray:
-    """Random color jitter on float32 image [0,1] in RGB."""
+                         brightness: float = 0.15,
+                         contrast: float = 0.15,
+                         saturation: float = 0.1) -> np.ndarray:
+    """Light color jitter on float32 image [0,1] in RGB."""
     image = image.copy()
-    # Brightness
     b = 1.0 + random.uniform(-brightness, brightness)
     image = np.clip(image * b, 0.0, 1.0)
-    # Contrast
     c = 1.0 + random.uniform(-contrast, contrast)
     mean = image.mean()
     image = np.clip((image - mean) * c + mean, 0.0, 1.0)
-    # Saturation (convert to HSV-like by scaling per channel)
     s = 1.0 + random.uniform(-saturation, saturation)
     gray = image.mean(axis=2, keepdims=True)
     image = np.clip(gray + s * (image - gray), 0.0, 1.0)
     return image.astype(np.float32)
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # ---------------------------------------------------------------------------
-# [CS2] Wing Loss — Thiết kế cho landmark detection
-# Nhạy với sai số nhỏ hơn SmoothL1, ép mô hình căn chỉnh pixel cuối cùng.
+# [CS2+v7] Wing Loss
 # ---------------------------------------------------------------------------
 def wing_loss(pred: torch.Tensor, target: torch.Tensor,
-             w: float = 10.0, eps: float = 2.0) -> torch.Tensor:
+              w: float = 10.0, eps: float = 2.0) -> torch.Tensor:
     """
     Wing Loss (Feng et al., CVPR 2018).
-    FIX BUG: Tọa độ ở dải [0, 1] nên x rất nhỏ (luôn < w=10), khiến Wing Loss bị thoái hóa 
-    thành L1 Loss. Phải scale lỗi lên pixel (VD: 224) để log curve hoạt động đúng.
+    Scale lỗi lên pixel (224) để log curve hoạt động đúng với tọa độ [0,1].
     """
     SCALE = 224.0
     x = (pred * SCALE - target * SCALE).abs()
     C = w - w * math.log(1.0 + w / eps)
-    
     loss = torch.where(x < w,
                        w * torch.log(1.0 + x / eps),
                        x - C)
     return loss.mean() / SCALE
 
-BATCH_SIZE = 64           # Giảm batch size cho VPS (RAM 15GB, CPU 20 cores)
-LEARNING_RATE = 1e-5      # LR cực nhỏ để "vắt kiệt" NME
-EPOCHS = 30               
-EARLY_STOP_PATIENCE = 15  
-LM_LOSS_WEIGHT = 15.0     # Mức 15 là đủ vì Wing Loss đã được sửa lỗi scale
-GRAD_CLIP_NORM = 1.0      
-WARMUP_EPOCHS = 3         
-IMAGE_SIZE = 224
+
+# ---------------------------------------------------------------------------
+# [v7] Focal Loss for landmark hard samples (small IOD, occlusion)
+# ---------------------------------------------------------------------------
+class FocalLandmarkLoss(nn.Module):
+    """
+    Focal loss giúp model tập trung vào hard samples.
+    α*c^i * (1-p^i)^γ * L1_loss
+    """
+    def __init__(self, alpha: float = 0.75, gamma: float = 2.0, scale: float = 224.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.scale = scale
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = (pred - target).abs() * self.scale  # pixel-scale error
+        pt = torch.exp(-diff)  # confidence
+        focal_weight = self.alpha * (1 - pt) ** self.gamma
+        loss = focal_weight * diff
+        return loss.mean() / self.scale
+
+
+BATCH_SIZE = 64
+LEARNING_RATE = 1e-5
+EPOCHS = 60
+EARLY_STOP_PATIENCE = 15
+LM_WING_WEIGHT  = 0.7
+LM_FOCAL_WEIGHT = 1.0
+LM_LOSS_WEIGHT  = 30.0
+GRAD_CLIP_NORM  = 1.0
+WARMUP_EPOCHS    = 5
+IMAGE_SIZE       = 224
+
+# [v7] Progressive Unfreeze Schedule
+UNFREEZE_PHASE2 = 5   # epoch bắt đầu mở layer4 (block 3)
+UNFREEZE_PHASE3 = 15  # epoch bắt đầu full fine-tune
+BACKBONE_LR_RATIO = 0.1
 
 # Auto-detect: Kaggle (/kaggle/input) hoặc local/VPS
 def _find_dataset_paths(root: str):
@@ -150,19 +136,18 @@ def _find_dataset_paths(root: str):
 _KAGGLE_INPUT = "/kaggle/input"
 if os.path.exists(_KAGGLE_INPUT):
     LABEL_CSV, IMG_DIR = _find_dataset_paths(_KAGGLE_INPUT)
-    MODEL_OUT   = "/kaggle/working/face_detect_model_vps_finetune_v4.pth"
+    MODEL_OUT   = "/kaggle/working/face_detect_model_vps_finetune_v7.pth"
     RESUME_FROM = "/kaggle/input/face-detect-weights/face_detect_model_vps_finetune_v3.pth"
     print(f"[Kaggle] LABEL_CSV : {LABEL_CSV}")
     print(f"[Kaggle] IMG_DIR   : {IMG_DIR}")
 else:
-    # Trên VPS hoặc Local
     LABEL_CSV, IMG_DIR = _find_dataset_paths(".")
     if not LABEL_CSV or not IMG_DIR:
         print("[Warning] Không tìm thấy dataset tự động. Đang dùng path mặc định.")
         IMG_DIR     = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
         LABEL_CSV   = "labels.csv"
-    
-    MODEL_OUT   = "face_detect_model_vps_finetune_v4.pth"
+
+    MODEL_OUT   = "face_detect_model_vps_finetune_v7.pth"
     RESUME_FROM = "face_detect_model_vps_finetune_v3.pth"
 
 IMG_W, IMG_H = 178, 218
@@ -235,9 +220,9 @@ class CelebADataset(Dataset):
         crop_y = int(by + bh * 0.4 - crop_h * 0.51)  # eye alignment
 
         if augment_shift:
-            # Shift ngẫu nhiên lên đến 5% kích thước crop để giả lập translation
-            crop_x += int(random.uniform(-0.05, 0.05) * crop_w)
-            crop_y += int(random.uniform(-0.05, 0.05) * crop_h)
+            # Shift nhẹ 3% kích thước crop
+            crop_x += int(random.uniform(-0.03, 0.03) * crop_w)
+            crop_y += int(random.uniform(-0.03, 0.03) * crop_h)
 
         H, W = image_full.shape[:2]
         face_crop = np.zeros((crop_h, crop_w, 3), dtype=np.uint8)
@@ -317,15 +302,11 @@ class CelebADataset(Dataset):
         landmarks[0::2] = np.clip((landmark_raw[0::2] - crop_x) / crop_w, 0.0, 1.0)
         landmarks[1::2] = np.clip((landmark_raw[1::2] - crop_y) / crop_h, 0.0, 1.0)
 
-        # --- Augmentation (train only) ---
+        # --- Augmentation (train only) — nhẹ nhất: chỉ H-flip + color jitter + crop shift 3% ---
         if self.augment:
             if random.random() < 0.5:
                 image, landmarks, bbox = augment_hflip(image, landmarks, bbox)
-            
-            # Rotation/scale mạnh hơn: 50% chance, góc max 15 độ
-            if random.random() < 0.5:
-                image, landmarks, bbox = augment_rotate_and_scale(image, landmarks, bbox, angle_max=15)
-                
+            # Light color jitter
             image = augment_color_jitter(image)
 
         # HWC -> CHW
@@ -338,54 +319,84 @@ class CelebADataset(Dataset):
         )
 
 # ==========================================
-# 3. KIẾN TRÚC MÔ HÌNH (MODEL)
+# 3. KIẾN TRÚC MÔ HÌNH (MODEL) — v7: ResNet18 backbone
 # ==========================================
 class FaceDetectMultiTask(nn.Module):
+    """
+    v7: ResNet18 thay MobileNetV2
+    - ResNet18: 512 feat + skip connections giữ lại spatial gradients tốt hơn
+    - Landmark Head: GAP + MaxPool concat → 1024 dim → MLP 512→256→10
+    - Spatial Attention: CBAM-style channel giúp focus vào regions có landmark
+    """
     def __init__(self):
         super(FaceDetectMultiTask, self).__init__()
-        # Dùng MobileNetV2 làm xương sống (nhẹ, nhanh, rất tốt cho máy tính cá nhân)
-        mobilenet = models.mobilenet_v2(pretrained=True)
-        self.backbone = mobilenet.features  # 19 blocks (index 0-18)
 
-        # Kích thước đầu ra của MobileNetV2 sau khi qua lớp Pooling
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        resnet = models.resnet18(pretrained=True)
+        self.backbone = nn.Sequential(
+            resnet.conv1,      # 64 channels
+            resnet.bn1,
+            resnet.relu,
+            resnet.maxpool,    # after maxpool: 64, 56x56
+            resnet.layer1,      # 64, 56x56
+            resnet.layer2,      # 128, 28x28
+            resnet.layer3,      # 256, 14x14
+            resnet.layer4,      # 512, 7x7
+        )
 
-        # 3 nhánh đầu ra
-        self.class_head    = nn.Linear(1280, 1)   # Có mặt hay không
-        self.bbox_head     = nn.Linear(1280, 4)   # 4 tọa độ hộp
+        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        self.gmp = nn.AdaptiveMaxPool2d((1, 1))
 
-        # [CS1] Nâng cấp Landmark Head: Linear -> MLP với Dropout
-        # Thay vì nén thẳng 1280->10 (quá đột ngột),
-        # ta thêm một lớp trung gian 256 để AI "suy nghĩ" sâu hơn.
-        # Dropout(0.3) ngẫu nhiên tắt 30% nơ-ron khi train -> chống overfitting.
-        self.landmark_head = nn.Sequential(
-            nn.Linear(1280, 256),
+        # Spatial attention: lightweight CBAM-style
+        self.sa_conv1 = nn.Conv2d(512, 256, kernel_size=3, padding=1)
+        self.sa_bn1   = nn.BatchNorm2d(256)
+        self.sa_conv2 = nn.Conv2d(256, 1, kernel_size=1)
+
+        self.feat_dim = 1024  # GAP(512) + GMP(512)
+
+        self.class_head = nn.Sequential(
+            nn.Linear(self.feat_dim, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
+            nn.Linear(256, 1),
+        )
+        self.bbox_head = nn.Sequential(
+            nn.Linear(self.feat_dim, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(256, 4),
+        )
+
+        self.landmark_head = nn.Sequential(
+            nn.Linear(self.feat_dim, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(512, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
             nn.Linear(256, 10),
         )
 
     def forward(self, x):
-        features = self.backbone(x)
-        features = self.pool(features)
-        features = torch.flatten(features, 1)  # Làm phẳng thành vector 1280 chiều
+        feat = self.backbone(x)  # [B, 512, 7, 7]
 
-        class_out    = self.class_head(features)
-        bbox_out     = self.bbox_head(features)
-        landmark_out = self.landmark_head(features)
+        # Spatial attention
+        sa = torch.relu(self.sa_bn1(self.sa_conv1(feat)))
+        sa = torch.sigmoid(self.sa_conv2(sa))
+        feat = feat * sa
+
+        gap_feat = self.gap(feat).flatten(1)
+        gmp_feat = self.gmp(feat).flatten(1)
+        feat = torch.cat([gap_feat, gmp_feat], dim=1)  # [B, 1024]
+
+        class_out    = self.class_head(feat)
+        bbox_out     = self.bbox_head(feat)
+        landmark_out = self.landmark_head(feat)
 
         return class_out, bbox_out, landmark_out
 
 # ==========================================
 # 4. KHỞI TẠO & HUẤN LUYỆN
 # ==========================================
-# [CS3] Progressive Unfreeze Schedule
-# Phase 1 (epoch 1-10):   Đóng băng toàn bộ backbone, chỉ train Heads.
-# Phase 2 (epoch 11-20):  Mở khóa 3 block cuối (block 16-18).
-# Phase 3 (epoch 21+):    Mở khóa toàn bộ với LR backbone = LR_HEAD / 10.
-UNFREEZE_PHASE2 = 10   # epoch bắt đầu phase 2
-UNFREEZE_PHASE3 = 20   # epoch bắt đầu phase 3
-BACKBONE_LR_RATIO = 0.1  # backbone học chậm hơn head 10 lần
 
 
 def _set_backbone_freeze(model: nn.Module, freeze: bool):
@@ -408,26 +419,8 @@ def train_model():
 
     # Hàm mất mát
     criterion_class = nn.BCEWithLogitsLoss()
-    # [CS2] Wing Loss thay thế SmoothL1 cho landmark
-    # (SmoothL1 vẫn dùng cho bbox vì bbox không cần độ nhạy pixel)
     criterion_bbox  = nn.SmoothL1Loss()
-
-    # Phase 1: đóng băng backbone, chỉ train heads
-    _set_backbone_freeze(model, freeze=True)
-    print("[CS3-Phase1] Backbone FROZEN — chỉ train Heads.")
-
-    # Optimizer: chia param_groups để dễ điều chỉnh LR backbone/head riêng
-    head_params = [
-        {'params': model.class_head.parameters()},
-        {'params': model.bbox_head.parameters()},
-        {'params': model.landmark_head.parameters()},
-    ]
-    optimizer = optim.AdamW(head_params, lr=LEARNING_RATE, weight_decay=1e-4)
-
-    # CosineAnnealingLR: smooth LR decay
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=EPOCHS, eta_min=1e-6
-    )
+    focal_landmark_loss = FocalLandmarkLoss(alpha=0.75, gamma=2.0)
 
     start_epoch    = 0
     best_val_loss  = float('inf')
@@ -435,24 +428,55 @@ def train_model():
 
     # Resume from checkpoint
     if RESUME_FROM and os.path.isfile(RESUME_FROM):
-        checkpoint = torch.load(RESUME_FROM, map_location=device)
-        
-        # Determine state_dict
+        checkpoint = torch.load(RESUME_FROM, map_location=device,
+                               weights_only=False)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             state_dict = checkpoint['model_state_dict']
         else:
             state_dict = checkpoint
-            
-        # Không bỏ qua landmark_head vì ta resume từ v2 đã có kiến trúc MLP
-        
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
-        print(f"[Resume] Đã load toàn bộ trọng số từ '{RESUME_FROM}'. Tiếp tục fine-tune.")
-        
-        # Bắt đầu train từ Epoch 0 vì landmark_head là hoàn toàn mới
+        # v7 kiến trúc hoàn toàn mới (ResNet18 512-dim vs MobileNetV2 1280-dim)
+        # Filter bỏ key có shape không khớp trước khi load
+        model_sd = model.state_dict()
+        filtered = {}
+        skipped = []
+        for k, v in state_dict.items():
+            k_clean = k.replace('module.', '')
+            if k_clean in model_sd and model_sd[k_clean].shape == v.shape:
+                filtered[k_clean] = v
+            else:
+                skipped.append(k)
+        missing, unexpected = model.load_state_dict(filtered, strict=False)
+        print(f"[Resume] Loaded {len(filtered)} compatible keys from '{RESUME_FROM}'.")
+        if skipped:
+            print(f"  Skipped (shape mismatch): {skipped[:10]}{'...' if len(skipped) > 10 else ''}")
         start_epoch = 0
         best_val_loss = float('inf')
+        resumed = True
     else:
-        print("[Train] Starting from scratch (ImageNet pretrained backbone).")
+        print("[Train] Starting from scratch (ImageNet pretrained ResNet18).")
+
+    # Cấu hình đóng băng và Optimizer dựa trên trạng thái Resume
+    head_params = [
+        {'params': model.class_head.parameters()},
+        {'params': model.bbox_head.parameters()},
+        {'params': model.landmark_head.parameters()},
+    ]
+    
+    if resumed:
+        _set_backbone_freeze(model, freeze=False)
+        print("[v7] Resume Mode: Backbone FULLY UNFROZEN from start.")
+        backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
+        head_params.append({'params': backbone.parameters(), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
+    else:
+        _set_backbone_freeze(model, freeze=True)
+        print("[v7-Phase1] Backbone FROZEN — chỉ train Heads (epoch 1-5).")
+
+    optimizer = optim.AdamW(head_params, lr=LEARNING_RATE, weight_decay=1e-4)
+
+    # CosineAnnealingLR: smooth LR decay
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=EPOCHS, eta_min=1e-6
+    )
 
     # Multi-GPU: DataParallel for Kaggle Dual T4.
     if torch.cuda.device_count() > 1:
@@ -475,25 +499,36 @@ def train_model():
         model.train()
         total_loss = 0.0
 
-        # [CS3] Progressive Unfreeze: chuyển phase theo epoch
-        if epoch == UNFREEZE_PHASE2:
-            _set_backbone_partial_freeze(model, unfreeze_from_block=16)
-            backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
-            optimizer.add_param_group({'params': list(backbone[16:].parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
-            print(f"[CS3-Phase2] Mở khóa Backbone block 16-18 | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
-        elif epoch == UNFREEZE_PHASE3:
-            _set_backbone_freeze(model, freeze=False)
-            backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
-            optimizer.add_param_group({'params': list(backbone[:16].parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
-            print(f"[CS3-Phase3] Mở khóa TOÀN BỘ Backbone | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
+        # [CS3] Progressive Unfreeze: chỉ áp dụng khi train từ đầu
+        if not resumed:
+            if epoch == UNFREEZE_PHASE2:
+                # Phase 2: mở layer3+layer4 của ResNet18
+                backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
+                for p in backbone.layer3.parameters():
+                    p.requires_grad = True
+                for p in backbone.layer4.parameters():
+                    p.requires_grad = True
+                optimizer.add_param_group({'params': list(backbone.layer3.parameters()) + list(backbone.layer4.parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
+                print(f"[v7-Phase2] Mở layer3+layer4 | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
+            elif epoch == UNFREEZE_PHASE3:
+                # Phase 3: mở layer1+layer2, full fine-tune với LR rất nhỏ
+                backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
+                for p in backbone.parameters():
+                    p.requires_grad = True
+                optimizer.add_param_group({'params': list(backbone.layer1.parameters()) + list(backbone.layer2.parameters()), 'lr': 5e-6})
+                print(f"[v7-Phase3] Full fine-tune | LR backbone = 5e-6")
 
         # Linear warmup: ramp LR from LR/10 → LR over WARMUP_EPOCHS
         # Only applies when loading weights-only (no optimizer state).
         if resumed and epoch < WARMUP_EPOCHS:
-            warmup_lr = LEARNING_RATE * (epoch + 1) / WARMUP_EPOCHS
-            for pg in optimizer.param_groups:
-                pg['lr'] = warmup_lr
-            print(f"  [Warmup] Epoch {epoch+1}/{WARMUP_EPOCHS} | LR = {warmup_lr:.6f}")
+            warmup_scale = (epoch + 1) / WARMUP_EPOCHS
+            for i, pg in enumerate(optimizer.param_groups):
+                # The last param_group is backbone if resumed
+                if i == len(optimizer.param_groups) - 1:
+                    pg['lr'] = LEARNING_RATE * BACKBONE_LR_RATIO * warmup_scale
+                else:
+                    pg['lr'] = LEARNING_RATE * warmup_scale
+            print(f"  [Warmup] Epoch {epoch+1}/{WARMUP_EPOCHS} | Head LR = {LEARNING_RATE * warmup_scale:.6e} | Backbone LR = {LEARNING_RATE * BACKBONE_LR_RATIO * warmup_scale:.6e}")
 
         is_kaggle = os.path.exists(_KAGGLE_INPUT)
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}", unit="batch", disable=is_kaggle)
@@ -512,8 +547,10 @@ def train_model():
             # Chỉ tính loss bbox và landmark cho các sample có mặt người (class_labels == 1)
             mask = (class_labels == 1.0).squeeze(-1)
             if mask.sum() > 0:
-                loss_bbox     = criterion_bbox(bbox_out[mask], bboxes[mask])           # SmoothL1 cho bbox
-                loss_landmark = wing_loss(landmark_out[mask], landmarks[mask])          # [CS2] Wing Loss cho landmark
+                loss_bbox       = criterion_bbox(bbox_out[mask], bboxes[mask])
+                loss_landmark_w = wing_loss(landmark_out[mask], landmarks[mask])
+                loss_landmark_f = focal_landmark_loss(landmark_out[mask], landmarks[mask])
+                loss_landmark   = loss_landmark_w * LM_WING_WEIGHT + loss_landmark_f * LM_FOCAL_WEIGHT
             else:
                 loss_bbox     = torch.tensor(0.0, device=device)
                 loss_landmark = torch.tensor(0.0, device=device)
@@ -558,8 +595,10 @@ def train_model():
 
                 mask = (class_labels == 1.0).squeeze(-1)
                 if mask.sum() > 0:
-                    loss_bbox     = criterion_bbox(bbox_out[mask], bboxes[mask])
-                    loss_landmark = wing_loss(landmark_out[mask], landmarks[mask])
+                    loss_bbox       = criterion_bbox(bbox_out[mask], bboxes[mask])
+                    loss_landmark_w = wing_loss(landmark_out[mask], landmarks[mask])
+                    loss_landmark_f = focal_landmark_loss(landmark_out[mask], landmarks[mask])
+                    loss_landmark   = loss_landmark_w * LM_WING_WEIGHT + loss_landmark_f * LM_FOCAL_WEIGHT
                 else:
                     loss_bbox     = torch.tensor(0.0, device=device)
                     loss_landmark = torch.tensor(0.0, device=device)

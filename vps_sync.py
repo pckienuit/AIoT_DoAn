@@ -35,9 +35,8 @@ def upload_files():
     
     files_to_upload = [
         "train.py",
-        "face_detect_model_vps_finetune_v3.pth",
     ]
-    
+
     for file in files_to_upload:
         if os.path.exists(file):
             print(f"\nUploading {file}...")
@@ -59,8 +58,8 @@ def download_model():
     client = create_ssh_client()
     sftp = client.open_sftp()
     
-    remote_model = "/root/face_detect_model_vps_finetune_v3.pth"
-    local_model  = "face_detect_model_vps_finetune_v3.pth"
+    remote_model = "/root/face_detect_model_vps_finetune_v7.pth"
+    local_model  = "face_detect_model_vps_finetune_v7.pth"
     
     try:
         sftp.stat(remote_model)
