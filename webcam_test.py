@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from train import FaceDetectMultiTask, IMAGE_SIZE
 
-MODEL_PATH     = "face_detect_model_vps_finetune.pth"
+MODEL_PATH     = "face_detect_model_vps_finetune_v2.pth"
 HAAR_PATH      = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]
@@ -19,12 +19,21 @@ LM_ALPHA   = 0.35
 
 
 def load_model(path: str) -> FaceDetectMultiTask:
+    import torch.nn as nn
     model = FaceDetectMultiTask()
     checkpoint = torch.load(path, map_location="cpu")
+    
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
     else:
-        model.load_state_dict(checkpoint)
+        state_dict = checkpoint
+        
+    # Tương thích ngược: Nếu checkpoint là model cũ (dùng nn.Linear thay vì MLP)
+    if "landmark_head.weight" in state_dict or "module.landmark_head.weight" in state_dict:
+        print("[Auto-Fix] Phát hiện file weights phiên bản cũ! Tự động lùi kiến trúc về bản cũ để chạy...")
+        model.landmark_head = nn.Linear(1280, 10)
+        
+    model.load_state_dict(state_dict)
     model.eval()
     return model
 

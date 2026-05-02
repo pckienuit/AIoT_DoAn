@@ -35,9 +35,7 @@ def upload_files():
     
     files_to_upload = [
         "train.py",
-        "labels.csv",
-        "face_detect_model_withval9.pth",
-        "celebA_dataset.zip"
+        "face_detect_model_vps_finetune_v2.pth",
     ]
     
     for file in files_to_upload:
@@ -50,10 +48,6 @@ def upload_files():
     
     sftp.close()
     
-    print("\nUnzipping dataset on VPS (this may take a minute)...")
-    stdin, stdout, stderr = client.exec_command("apt-get install -y unzip && unzip -q -o /root/celebA_dataset.zip -d /root/celebA_dataset")
-    stdout.read()
-    
     print("\n--- UPLOAD COMPLETE ---")
     print("Now you can SSH into the VPS and run:")
     print("  source ai_env/bin/activate")
@@ -65,8 +59,8 @@ def download_model():
     client = create_ssh_client()
     sftp = client.open_sftp()
     
-    remote_model = "/root/face_detect_model_vps_finetune.pth"
-    local_model  = "face_detect_model_vps_finetune.pth"
+    remote_model = "/root/face_detect_model_vps_finetune_v2.pth"
+    local_model  = "face_detect_model_vps_finetune_v2.pth"
     
     try:
         sftp.stat(remote_model)

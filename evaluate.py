@@ -20,7 +20,7 @@ import sys
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_PATH  = "face_detect_model_vps_finetune.pth"
+MODEL_PATH  = "face_detect_model_vps_finetune_v2.pth"
 if len(sys.argv) > 1:
     MODEL_PATH = sys.argv[1]
 BATCH_SIZE  = 64
