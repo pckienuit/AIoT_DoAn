@@ -20,7 +20,7 @@ import sys
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_PATH  = "face_detect_model_vps_finetune_v2.pth"
+MODEL_PATH  = "face_detect_model_vps_finetune_v7.pth"
 if len(sys.argv) > 1:
     MODEL_PATH = sys.argv[1]
 BATCH_SIZE  = 64
@@ -77,7 +77,7 @@ def is_clean_gt_sample(lm_gt_norm: np.ndarray) -> bool:
 # ---------------------------------------------------------------------------
 def evaluate(model_path: str) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Thiết bị: {device}")
+    print(f"Device: {device}")
 
     # Load model — supports both full checkpoint and weights-only .pth
     model = FaceDetectMultiTask()
@@ -86,10 +86,10 @@ def evaluate(model_path: str) -> None:
         model.load_state_dict(checkpoint['model_state_dict'])
         epoch = checkpoint.get('epoch', '?')
         val   = checkpoint.get('best_val_loss', '?')
-        print(f"Đã load full checkpoint từ '{model_path}' (epoch={epoch}, val_loss={val})")
+        print(f"[OK] Loaded full checkpoint from '{model_path}' (epoch={epoch}, val_loss={val})")
     else:
         model.load_state_dict(checkpoint)
-        print(f"Đã load weights-only từ '{model_path}'")
+        print(f"[OK] Loaded weights-only from '{model_path}'")
     model.to(device)
     model.eval()
 
@@ -189,32 +189,32 @@ def evaluate(model_path: str) -> None:
     per_lm_mae = per_lm_errors / positive_samples if positive_samples else np.zeros(5)
 
     print("=" * 55)
-    print("         KẾT QUẢ ĐÁNH GIÁ TRÊN TEST SET")
+    print("         TEST SET EVALUATION RESULTS")
     print("=" * 55)
-    print(f"  Tổng mẫu test         : {total_samples:,}")
-    print(f"  Mẫu positive (landmark): {positive_samples:,}")
-    print(f"  Mẫu clean cho NME      : {clean_nme_samples:,}")
+    print(f"  Total test samples     : {total_samples:,}")
+    print(f"  Positive (landmark)    : {positive_samples:,}")
+    print(f"  Clean NME samples      : {clean_nme_samples:,}")
     print(f"  Classification Accuracy: {acc:.2f}%")
-    print(f"  NME (% interocular) all+: {nme_all:.2f}%  (all positive)")
-    print(f"  NME (% interocular) clean: {nme:.2f}%  (clean subset)")
+    print(f"  NME (%% interocular) all+: {nme_all:.2f}%  (all positive)")
+    print(f"  NME (%% interocular) clean: {nme:.2f}%  (clean subset)")
     print("-" * 55)
     print("  Per-Landmark Error (pixel Euclidean):")
     for j, name in enumerate(LANDMARK_NAMES):
-        bar = "█" * int(per_lm_mae[j] / 2)
+        bar = "#" * int(per_lm_mae[j] / 2)
         print(f"    {name:<10}: {per_lm_mae[j]:6.2f} px  {bar}")
     print("=" * 55)
 
-    # Đánh giá chất lượng NME
-    print("\n  Thang đánh giá NME (tiêu chuẩn WFLW/300W):")
+    # Thang danh gia NME
     if nme < 4:
-        grade = "🟢 Tốt"
+        grade = "[GOOD] Excellent"
     elif nme < 7:
-        grade = "🟡 Chấp nhận được"
+        grade = "[OK] Acceptable"
     elif nme < 10:
-        grade = "🟠 Cần cải thiện"
+        grade = "[WARN] Needs improvement"
     else:
-        grade = "🔴 Kém — cần augmentation / thêm epochs"
-    print(f"  NME = {nme:.2f}% → {grade}")
+        grade = "[BAD] Poor - needs augmentation / more epochs"
+    print(f"\n  NME grade (WFLW/300W standard):")
+    print(f"  NME = {nme:.2f}% -> {grade}")
     print()
 
 

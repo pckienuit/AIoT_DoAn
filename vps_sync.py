@@ -34,7 +34,7 @@ def upload_files():
     sftp = client.open_sftp()
     
     files_to_upload = [
-        "train.py",
+        "train_v8.py",
     ]
 
     for file in files_to_upload:
@@ -50,7 +50,7 @@ def upload_files():
     print("\n--- UPLOAD COMPLETE ---")
     print("Now you can SSH into the VPS and run:")
     print("  source ai_env/bin/activate")
-    print("  python3 train.py")
+    print("  python3 train_v8.py")
     client.close()
 
 def download_model():
@@ -58,8 +58,8 @@ def download_model():
     client = create_ssh_client()
     sftp = client.open_sftp()
     
-    remote_model = "/root/face_detect_model_vps_finetune_v7.pth"
-    local_model  = "face_detect_model_vps_finetune_v7.pth"
+    remote_model = "/root/face_detect_model_vps_finetune_v8.pth"
+    local_model  = "face_detect_model_vps_finetune_v8.pth"
     
     try:
         sftp.stat(remote_model)
