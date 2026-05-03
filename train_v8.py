@@ -134,8 +134,8 @@ else:
         IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
         LABEL_CSV = "labels.csv"
 
-    MODEL_OUT   = "face_detect_model_vps_finetune_v8.pth"
-    RESUME_FROM = "face_detect_model_vps_finetune_v3.pth"
+    MODEL_OUT   = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v8.pth")
+    RESUME_FROM = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v3.pth")
 
 IMG_W, IMG_H = 178, 218
 

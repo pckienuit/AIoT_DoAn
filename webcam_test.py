@@ -3,7 +3,8 @@ import torch
 import numpy as np
 from train import FaceDetectMultiTask, IMAGE_SIZE
 
-MODEL_PATH     = "face_detect_model_vps_finetune_v2.pth"
+import os
+MODEL_PATH     = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v2.pth")
 HAAR_PATH      = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]

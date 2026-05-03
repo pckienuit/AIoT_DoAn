@@ -1,9 +1,9 @@
 import pandas as pd
 import os
 
-DATASET_DIR = "celebA_dataset"
+DATASET_DIR = "data/celebA_dataset"
 IMG_DIR = os.path.join(DATASET_DIR, "img_align_celeba", "img_align_celeba")
-OUTPUT_CSV = "labels.csv"
+OUTPUT_CSV = "data/labels.csv"
 
 def load_and_merge() -> pd.DataFrame:
     df_partition = pd.read_csv(os.path.join(DATASET_DIR, "list_eval_partition.csv"))
