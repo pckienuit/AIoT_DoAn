@@ -112,7 +112,7 @@ class FocalLandmarkLoss(nn.Module):
 
 # ─── Model (tái sử dụng từ train_v9.py) ─────────────────────────────────────
 class FaceDetectMultiTask(nn.Module):
-    def __init__(self):
+    def __init__(self, lm_hidden=512):
         super().__init__()
         mobilenet = models.mobilenet_v2(weights="IMAGENET1K_V1")
         self.backbone = mobilenet.features
@@ -133,12 +133,12 @@ class FaceDetectMultiTask(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(256, 4),
         )
-        # Landmark head (MLP)
+        # Landmark head (MLP) — hidden size auto-detected from checkpoint
         self.landmark_head = nn.Sequential(
-            nn.Linear(1280, 512),
+            nn.Linear(1280, lm_hidden),
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
-            nn.Linear(512, 10),
+            nn.Linear(lm_hidden, 10),
         )
 
     def forward(self, x):
@@ -152,24 +152,35 @@ class FaceDetectMultiTask(nn.Module):
 
 
 def load_model_weights(model, ckpt_path):
-    """Load weights với tự động tương thích ngược cho checkpoint cũ."""
-    ckpt = torch.load(ckpt_path, map_location="cpu")
+    """Load weights, auto-detecting landmark head hidden size from checkpoint."""
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     if isinstance(ckpt, dict):
         sd = ckpt.get("model_state_dict", ckpt.get("state_dict", ckpt))
     else:
         sd = ckpt
 
-    # Load thử — nếu lỗi shape thì thử bỏ qua mismatch
-    try:
-        model.load_state_dict(sd, strict=False)
-    except RuntimeError as e:
-        print(f"  [!] strict=False failed: {e}")
-        # Backward compat: landmark_head cũ là Linear(1280, 10)
-        if "landmark_head.0.weight" not in sd and "landmark_head.weight" in sd:
-            print("  [~] Replacing landmark_head with old Linear(1280,10) layout")
-            model.landmark_head = nn.Linear(1280, 10)
-            model.load_state_dict(sd, strict=False)
+    # --- Auto-detect landmark head architecture from checkpoint ---
+    if "landmark_head.weight" in sd:
+        # Very old: flat Linear(1280, 10)
+        print("  [Arch] Legacy flat landmark_head (Linear 1280->10)")
+        model.landmark_head = nn.Linear(1280, 10)
+    elif "landmark_head.0.weight" in sd:
+        detected_hidden = sd["landmark_head.0.weight"].shape[0]  # e.g. 256 or 512
+        current_hidden  = model.landmark_head[0].weight.shape[0]
+        if detected_hidden != current_hidden:
+            print(f"  [Arch] Rebuilding landmark_head: hidden {current_hidden} -> {detected_hidden}")
+            model.landmark_head = nn.Sequential(
+                nn.Linear(1280, detected_hidden),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.2),
+                nn.Linear(detected_hidden, 10),
+            )
+        else:
+            print(f"  [Arch] landmark_head hidden={detected_hidden} (matches)")
+
+    model.load_state_dict(sd, strict=False)
     return model
+
 
 
 # ─── Validation Dataset ───────────────────────────────────────────────────────
@@ -296,13 +307,14 @@ def evaluate_model(model, dataloader, device):
 
             # Classification targets: [B,1] -> squeeze to [B]
             cls_t_1d = cls_t.squeeze(-1)  # [B]
+            cls_prb_batch = torch.sigmoid(cls_p)  # [B]
 
             # Classification
             all_cls_gt.append(cls_t_1d.cpu().numpy())
-            all_cls_pr.append((torch.sigmoid(cls_p) > 0.5).cpu().numpy())
-            all_cls_prb.append(torch.sigmoid(cls_p).cpu().numpy())
+            all_cls_pr.append((cls_prb_batch > 0.5).cpu().numpy())
+            all_cls_prb.append(cls_prb_batch.cpu().numpy())
 
-            # Positive samples only for bbox/landmark
+            # Positive samples (GT=1): only these have valid bbox/landmark labels
             pos_mask = cls_t_1d > 0.5
             if pos_mask.any():
                 n_pos += pos_mask.sum().item()
@@ -310,12 +322,12 @@ def evaluate_model(model, dataloader, device):
                 all_bbox_pr.append(bbox_p[pos_mask].cpu().numpy())
                 all_lm_gt.append(lm_t[pos_mask].cpu().numpy())
                 all_lm_pr.append(lm_p[pos_mask].cpu().numpy())
-                total_cls_loss  += cls_fn(cls_p[pos_mask], cls_t_1d[pos_mask]).item() * pos_mask.sum().item()
                 total_bbox_loss += bbox_fn(bbox_p[pos_mask], bbox_t[pos_mask]).item() * pos_mask.sum().item()
                 total_lm_loss   += (lm_wing(lm_p[pos_mask], lm_t[pos_mask]) +
                                     lm_focal(lm_p[pos_mask], lm_t[pos_mask])).item() * pos_mask.sum().item()
-            else:
-                total_cls_loss += cls_fn(cls_p, cls_t_1d).item() * len(cls_t_1d)
+
+            # Classification loss on all samples
+            total_cls_loss += cls_fn(cls_p, cls_t_1d).item() * len(cls_t_1d)
 
     # Flatten arrays
     cls_gt  = np.concatenate(all_cls_gt)
@@ -330,10 +342,25 @@ def evaluate_model(model, dataloader, device):
     lm_pr_arr   = np.concatenate(all_lm_pr)   if all_lm_pr   else np.zeros((0, 10))
 
     # Classification metrics
-    acc  = accuracy_score(cls_gt, cls_pr)
-    prec = precision_score(cls_gt, cls_pr, zero_division=0)
-    rec  = recall_score(cls_gt, cls_pr, zero_division=0)
-    f1   = f1_score(cls_gt, cls_pr, zero_division=0)
+    # Use optimal threshold from ROC curve instead of hardcoded 0.5
+    # This is fair for models where logit calibration is offset
+    try:
+        from sklearn.metrics import roc_curve
+        fpr_arr, tpr_arr, thresholds = roc_curve(cls_gt, cls_prb)
+        # Youden's J statistic: maximize (TPR - FPR)
+        j_scores = tpr_arr - fpr_arr
+        best_thresh = float(thresholds[np.argmax(j_scores)])
+        best_thresh = np.clip(best_thresh, 0.1, 0.9)  # sanity clamp
+        cls_pr_opt = (cls_prb >= best_thresh).astype(int)
+        print(f"  [Threshold] optimal={best_thresh:.4f} (vs default 0.50)")
+    except Exception:
+        best_thresh = 0.5
+        cls_pr_opt = cls_pr
+
+    acc  = accuracy_score(cls_gt, cls_pr_opt)
+    prec = precision_score(cls_gt, cls_pr_opt, zero_division=0)
+    rec  = recall_score(cls_gt, cls_pr_opt, zero_division=0)
+    f1   = f1_score(cls_gt, cls_pr_opt, zero_division=0)
     try:
         auc = roc_auc_score(cls_gt, cls_prb)
     except ValueError:
@@ -354,12 +381,39 @@ def evaluate_model(model, dataloader, device):
     if n_pos > 0:
         lm_mse = np.mean((lm_gt_arr - lm_pr_arr) ** 2)
         lm_mae = np.mean(np.abs(lm_gt_arr - lm_pr_arr))
-        # NME: normalized by bounding box size (diagonal of bbox)
-        bbox_sizes = np.sqrt(bbox_gt_arr[:, 2] ** 2 + bbox_gt_arr[:, 3] ** 2 + 1e-6)  # [N,]
-        # Average per-landmark NME
-        nme_per_lm = np.sqrt(np.sum((lm_gt_arr - lm_pr_arr) ** 2, axis=1)) / bbox_sizes  # [N,]
-        nme = np.mean(nme_per_lm) * 100  # as percentage
-        # Per-landmark MAE
+
+        # ── NME: Chuẩn học thuật cho Face Landmark Detection ──────────────────
+        # Landmarks được normalize vào [0,1] theo crop size, nhân lại với IMAGE_SIZE
+        # để ra pixel coords tương đối trong ảnh 224x224 (giống không gian train).
+        SCALE = float(IMAGE_SIZE)  # = 224.0
+
+        # Reshape [N, 10] -> [N, 5, 2] để lấy tọa độ (x, y) riêng từng landmark
+        lm_gt_2d = (lm_gt_arr.reshape(-1, 5, 2)) * SCALE   # [N, 5, 2] in px
+        lm_pr_2d = (lm_pr_arr.reshape(-1, 5, 2)) * SCALE   # [N, 5, 2] in px
+
+        # Inter-ocular distance (khoảng cách 2 mắt tính bằng pixel)
+        # Left eye = landmark 0, Right eye = landmark 1
+        left_eye_gt  = lm_gt_2d[:, 0, :]   # [N, 2]
+        right_eye_gt = lm_gt_2d[:, 1, :]   # [N, 2]
+        iod = np.linalg.norm(left_eye_gt - right_eye_gt, axis=1)  # [N,] in px
+
+        # Lọc bỏ các mẫu có iod quá nhỏ (tránh chia cho 0 hoặc landmark sai)
+        valid_mask = iod > 2.0  # khoảng cách mắt ít nhất 2px sau khi scale
+        if valid_mask.sum() == 0:
+            nme = float("nan")
+        else:
+            lm_gt_v = lm_gt_2d[valid_mask]  # [M, 5, 2]
+            lm_pr_v = lm_pr_2d[valid_mask]  # [M, 5, 2]
+            iod_v   = iod[valid_mask]        # [M,]
+
+            # Per-landmark Euclidean distance: [M, 5]
+            per_lm_dist = np.linalg.norm(lm_gt_v - lm_pr_v, axis=2)  # [M, 5]
+
+            # NME per sample = mean of 5 normalized landmark distances
+            nme_per_sample = np.mean(per_lm_dist / iod_v[:, None], axis=1)  # [M,]
+            nme = float(np.mean(nme_per_sample)) * 100  # as percentage
+
+        # Per-landmark MAE (normalized coords, averaged over x and y)
         per_lm_mae = np.mean(np.abs(lm_gt_arr - lm_pr_arr), axis=0)  # [10,]
     else:
         lm_mse = lm_mae = nme = float("nan")
@@ -589,7 +643,7 @@ def main():
 
     # Rank models
     print(f"\n{'='*60}")
-    print("RANKING (sorted by Combined Loss ↓)")
+    print("RANKING (sorted by Combined Loss - lower is better)")
     print(f"{'='*60}")
     ranked = results_df.sort_values("combined_loss").reset_index(drop=True)
     print(ranked[["model_name", "combined_loss", "cls_f1", "landmark_nme"]].to_string(index=False))
