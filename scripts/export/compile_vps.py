@@ -23,8 +23,8 @@ def main():
     remote_dir = "/root/maixcam_workspace"
     client.exec_command(f"rm -rf {remote_dir} && mkdir -p {remote_dir}")
     
-    # 2. Upload file maixhub_upload_fixed.zip
-    local_zip = os.path.join("models", "exports", "maixhub_upload_fixed.zip")
+    # 2. Upload file maixhub_upload_v9.zip
+    local_zip = os.path.join("models", "exports", "maixhub_upload_v9.zip")
     remote_zip = f"{remote_dir}/upload.zip"
     
     if not os.path.exists(local_zip):
@@ -63,31 +63,31 @@ def main():
         
         echo '[Buoc 1/3] ONNX -> MLIR'
         model_transform.py \
-            --model_name face_detect \
-            --model_def face_detect_model_v3.onnx \
+            --model_name face_detect_v9 \
+            --model_def face_detect_v9.onnx \
             --input_shapes [[1,3,224,224]] \
             --mean 0.0,0.0,0.0 \
             --scale 0.0039215686,0.0039215686,0.0039215686 \
             --pixel_format rgb \
             --test_input images/\$(ls images | head -n 1) \
-            --test_result face_detect_top_outputs.npz \
-            --mlir face_detect.mlir
+            --test_result face_detect_v9_top_outputs.npz \
+            --mlir face_detect_v9.mlir
             
         echo '[Buoc 2/3] Luong tu hoa (Calibration)'
-        run_calibration.py face_detect.mlir \
+        run_calibration.py face_detect_v9.mlir \
             --dataset images \
             --input_num 100 \
-            -o face_detect_calib_table
+            -o face_detect_v9_calib_table
             
         echo '[Buoc 3/3] MLIR -> CVIMODEL (Danh cho mach SG2002)'
         model_deploy.py \
-            --mlir face_detect.mlir \
+            --mlir face_detect_v9.mlir \
             --quantize INT8 \
-            --calibration_table face_detect_calib_table \
+            --calibration_table face_detect_v9_calib_table \
             --processor cv181x \
-            --test_input face_detect_in_f32.npz \
-            --test_reference face_detect_top_outputs.npz \
-            --model face_detect.cvimodel
+            --test_input face_detect_v9_in_f32.npz \
+            --test_reference face_detect_v9_top_outputs.npz \
+            --model face_detect_v9.cvimodel
             
         echo 'HOAN THANH BIEN DICH!'
     "
@@ -109,8 +109,8 @@ def main():
 
     if exit_status == 0:
         # 4. Tải file kết quả về máy
-        remote_cvimodel = f"{remote_dir}/face_detect.cvimodel"
-        local_cvimodel = os.path.join("models", "exports", "face_detect.cvimodel")
+        remote_cvimodel = f"{remote_dir}/face_detect_v9.cvimodel"
+        local_cvimodel = os.path.join("models", "exports", "face_detect_v9.cvimodel")
         print(f"Dang tai mo hinh da bien dich ({remote_cvimodel}) ve may...")
         try:
             sftp.get(remote_cvimodel, local_cvimodel)
@@ -119,7 +119,7 @@ def main():
             # Tự động tạo file .mud cho MaixCAM
             mud_content = """[basic]
 type = cvimodel
-model = face_detect.cvimodel
+model = face_detect_v9.cvimodel
 
 [extra]
 model_type = custom
@@ -127,7 +127,7 @@ input_type = rgb
 mean = 0, 0, 0
 scale = 0.0039215686, 0.0039215686, 0.0039215686
 """
-            local_mud = os.path.join("models", "exports", "face_detect_v3.mud")
+            local_mud = os.path.join("models", "exports", "face_detect_v9.mud")
             with open(local_mud, 'w') as f:
                 f.write(mud_content)
             print("Da tao file cau hinh:", local_mud)
