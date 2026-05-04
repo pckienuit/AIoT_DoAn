@@ -1,10 +1,10 @@
 import cv2
 import torch
 import numpy as np
-from train import FaceDetectMultiTask, IMAGE_SIZE
+from train_v8 import FaceDetectMultiTask, IMAGE_SIZE
 
 import os
-MODEL_PATH     = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v2.pth")
+MODEL_PATH     = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v9.pth")
 HAAR_PATH      = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 
 LANDMARK_NAMES = ["L.Eye", "R.Eye", "Nose", "L.Mouth", "R.Mouth"]
@@ -47,8 +47,8 @@ def predict_face(model: FaceDetectMultiTask, face_crop: np.ndarray):
     with torch.no_grad():
         cls_out, bbox_out, lm_out = model(tensor)
     cls_score = torch.sigmoid(cls_out).item()
-    bbox      = bbox_out.numpy()[0]   # [x, y, w, h] normalized
-    landmarks = lm_out.numpy()[0]     # [10] normalized
+    bbox      = np.clip(bbox_out.numpy()[0], 0.0, 1.0)   # [x, y, w, h] normalized & clamped
+    landmarks = np.clip(lm_out.numpy()[0], 0.0, 1.0)     # clamp to [0,1] for safety
     return cls_score, bbox, landmarks
 
 

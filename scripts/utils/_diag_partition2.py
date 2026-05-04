@@ -1,10 +1,33 @@
+import sys, os
 import numpy as np
 import pandas as pd
 
-from train import LABEL_CSV, IMAGE_SIZE
+# Auto-detect dataset paths
+def _find_csv(path):
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            if f == "labels.csv":
+                return os.path.join(dirpath, f)
+    return None
+
+def _find_img(path):
+    for dirpath, dirnames, filenames in os.walk(path):
+        for d in dirnames:
+            if "img_align_cel" in d:
+                nested = os.path.join(dirpath, d, d)
+                if os.path.isdir(nested):
+                    return nested
+                return os.path.join(dirpath, d)
+    return None
+
+LABEL_CSV = _find_csv(".")
+IMG_DIR = _find_img(".")
+if not IMG_DIR:
+    IMG_DIR = os.path.join("celebA_dataset", "img_align_cel")
+IMAGE_SIZE = 224
 
 
-def compute_crop_params(bx: np.ndarray, by: np.ndarray, bw: np.ndarray, bh: np.ndarray):
+def compute_crop_params(bx, by, bw, bh):
     crop_scale = 2.14
     crop_ar = 1.22
     crop_w = np.maximum(10, np.floor(bw * crop_scale)).astype(np.float32)
@@ -25,41 +48,57 @@ def main():
 
     crop_x, crop_y, crop_w, crop_h = compute_crop_params(bx, by, bw, bh)
 
-    lm_raw = df[
-        [
-            "lefteye_x", "lefteye_y",
-            "righteye_x", "righteye_y",
-            "nose_x", "nose_y",
-            "leftmouth_x", "leftmouth_y",
-            "rightmouth_x", "rightmouth_y",
-        ]
-    ].to_numpy(np.float32)
+    lm_raw = df[[
+        "lefteye_x", "lefteye_y",
+        "righteye_x", "righteye_y",
+        "nose_x", "nose_y",
+        "leftmouth_x", "leftmouth_y",
+        "rightmouth_x", "rightmouth_y",
+    ]].to_numpy(np.float32)
 
-    lm_norm = np.empty_like(lm_raw)
-    lm_norm[:, 0::2] = np.clip((lm_raw[:, 0::2] - crop_x[:, None]) / crop_w[:, None], 0.0, 1.0)
-    lm_norm[:, 1::2] = np.clip((lm_raw[:, 1::2] - crop_y[:, None]) / crop_h[:, None], 0.0, 1.0)
+    # OLD: zero-pad logic → coordinates clipped to [0,1]
+    lm_old = np.empty_like(lm_raw)
+    lm_old[:, 0::2] = np.clip((lm_raw[:, 0::2] - crop_x[:, None]) / crop_w[:, None], 0.0, 1.0)
+    lm_old[:, 1::2] = np.clip((lm_raw[:, 1::2] - crop_y[:, None]) / crop_h[:, None], 0.0, 1.0)
 
-    iod_norm = np.hypot(lm_norm[:, 0] - lm_norm[:, 2], lm_norm[:, 1] - lm_norm[:, 3])
-    iod_px = iod_norm * IMAGE_SIZE
+    # NEW: BORDER_REPLICATE logic → no clipping
+    lm_new = np.empty_like(lm_raw)
+    lm_new[:, 0::2] = (lm_raw[:, 0::2] - crop_x[:, None]) / crop_w[:, None]
+    lm_new[:, 1::2] = (lm_raw[:, 1::2] - crop_y[:, None]) / crop_h[:, None]
 
-    thresholds = [0.01, 0.02, 0.03, 0.05]
-    clipped_mask = (lm_norm == 0.0) | (lm_norm == 1.0)
+    iod_old = np.hypot(lm_old[:, 0] - lm_old[:, 2], lm_old[:, 1] - lm_old[:, 3])
+    iod_new = np.hypot(lm_new[:, 0] - lm_new[:, 2], lm_new[:, 1] - lm_new[:, 3])
+
+    clipped_old = (lm_old == 0.0) | (lm_old == 1.0)
+    out_new     = (lm_new < 0.0) | (lm_new > 1.0)
 
     print(f"partition2_samples={len(df)}")
-    print(
-        "iod_norm_stats="
-        f"min:{iod_norm.min():.6f}, mean:{iod_norm.mean():.6f}, median:{np.median(iod_norm):.6f}, "
-        f"p5:{np.percentile(iod_norm, 5):.6f}, p95:{np.percentile(iod_norm, 95):.6f}"
-    )
-    print(
-        "iod_px_stats="
-        f"min:{iod_px.min():.3f}, mean:{iod_px.mean():.3f}, median:{np.median(iod_px):.3f}"
-    )
-    for t in thresholds:
-        print(f"iod_lt_{t:.2f}_pct={100.0 * np.mean(iod_norm < t):.4f}")
-
-    print(f"coords_clipped_to_0_or_1_pct={100.0 * clipped_mask.mean():.4f}")
-    print(f"samples_with_any_clipped_coord_pct={100.0 * np.mean(clipped_mask.any(axis=1)):.4f}")
+    print()
+    print("=" * 60)
+    print("  IOD (interocular distance) comparison")
+    print("=" * 60)
+    print(f"  OLD (zero-pad):  mean={iod_old.mean():.6f}  median={np.median(iod_old):.6f}  p5={np.percentile(iod_old, 5):.6f}")
+    print(f"  NEW (replicate): mean={iod_new.mean():.6f}  median={np.median(iod_new):.6f}  p5={np.percentile(iod_new, 5):.6f}")
+    print()
+    print("  IOD < threshold percentage:")
+    for t in [0.01, 0.02, 0.03, 0.05]:
+        print(f"    IOD < {t:.2f}: OLD={100*(iod_old<t).mean():.4f}%  NEW={100*(iod_new<t).mean():.4f}%  delta={100*((iod_new<t).mean()-(iod_old<t).mean()):+.4f}%")
+    print()
+    print("=" * 60)
+    print("  Landmark coordinate clipping")
+    print("=" * 60)
+    print(f"  OLD coords clipped to 0 or 1:  {100*clipped_old.mean():.4f}%  ({100*clipped_old.any(axis=1).mean():.4f}% samples)")
+    print(f"  NEW coords out of [0,1]:       {100*out_new.mean():.4f}%  ({100*out_new.any(axis=1).mean():.4f}% samples)")
+    print()
+    low  = (lm_new < 0.0).any(axis=1).sum()
+    high = (lm_new > 1.0).any(axis=1).sum()
+    any_out = ((lm_new < 0.0) | (lm_new > 1.0)).any(axis=1).sum()
+    print(f"  NEW samples with coords < 0: {low:,}")
+    print(f"  NEW samples with coords > 1: {high:,}")
+    print(f"  NEW samples out of [0,1]:   {any_out:,}")
+    print()
+    print("  Note: Out-of-bounds coords are clipped by PyTorch normalize().")
+    print("  BORDER_REPLICATE eliminates black padding entirely.")
 
 
 if __name__ == "__main__":

@@ -1,68 +1,80 @@
-from maix import camera, display, image, nn, app
-import time
+from maix import camera, display, image, nn, app, tensor
+import numpy as np
+import math
+
+THRESH = 0.4
+
+OUT_CLASS    = "class_out_Gemm_f32"
+OUT_LANDMARK = "landmark_out_Gemm_f32"
+
+IMG_MEAN  = [0.001, 0.001, 0.001]
+IMG_SCALE = [0.003921568, 0.003921568, 0.003921568]
+
+LM_NAMES = ["LE", "RE", "N", "LM", "RM"]
+LM_COLORS = [
+    image.COLOR_RED, image.COLOR_BLUE, image.COLOR_GREEN,
+    image.COLOR_YELLOW, image.COLOR_WHITE,
+]
+
 
 def main():
-    # 1. Khởi tạo Camera và Màn hình LCD
-    # MaixCAM mặc định dùng độ phân giải này cho mượt
-    cam = camera.Camera(320, 240)
+    cam_w, cam_h = 320, 240
+    cam  = camera.Camera(cam_w, cam_h)
     disp = display.Display()
 
-    print("Đang nạp model NPU...")
-    # 2. Nạp model .mud (copy file từ MaixVision vào thẻ nhớ MaixCAM)
-    model = nn.Model("face_detect_model_v3.mud")
-    print("Nạp model thành công!")
+    print(f"Display: {disp.width()}x{disp.height()}")
+    print(f"Camera:  {cam_w}x{cam_h}")
 
-    # Lấy thông tin kích thước đầu vào của model (chắc chắn là 224x224)
-    input_shape = model.inputs[0].shape
-    MODEL_W = input_shape[2]  # 224
-    MODEL_H = input_shape[3]  # 224
+    model = nn.NN("/root/models/face_detect_v3.mud")
+    print("Model loaded!")
 
+    frame = 0
     while not app.need_exit():
-        # Đọc khung hình từ camera
         img = cam.read()
 
-        # 3. Tiền xử lý (Pre-processing)
-        # NPU SG2002 yêu cầu ảnh đúng 224x224. Ta thu nhỏ ảnh camera lại.
-        # Lưu ý: Việc chia 255.0 (scale) đã được NPU làm tự động nhờ cấu hình lúc convert trên MaixVision!
-        img_resized = img.resize(MODEL_W, MODEL_H)
+        # Debug: danh dau goc tren-trai bang hinh vuong do
+        img.draw_rect(0, 0, 30, 30, image.COLOR_RED, -1)
+        img.draw_string(2, 2, "TL", image.COLOR_WHITE)
+        # Danh dau tam anh
+        img.draw_circle(cam_w // 2, cam_h // 2, 5, image.COLOR_WHITE, -1)
 
-        # 4. Đưa vào NPU dự đoán (Inference)
-        # Hàm forward trả về một list các tensor output (tuơng ứng class_out, bbox_out, landmark_out)
-        t_start = time.time()
-        outputs = model.forward(img_resized)
-        t_infer = (time.time() - t_start) * 1000  # Tính ms
+        try:
+            outputs = model.forward_image(
+                img, IMG_MEAN, IMG_SCALE,
+                image.Fit.FIT_FILL, True, False
+            )
 
-        # Thứ tự output phụ thuộc vào lúc export ONNX.
-        # Ở đây ta giả sử: [0] = class, [1] = bbox, [2] = landmarks
-        class_out = outputs[0].to_numpy()
-        bbox_out = outputs[1].to_numpy()
-        landmark_out = outputs[2].to_numpy()
+            if outputs is None:
+                disp.show(img)
+                frame += 1
+                continue
 
-        # Tính class score (Sigmoid)
-        import math
-        score = 1.0 / (1.0 + math.exp(-class_out[0][0]))
+            class_arr    = tensor.tensor_to_numpy_float32(outputs.get_tensor(OUT_CLASS)).flatten()
+            landmark_arr = tensor.tensor_to_numpy_float32(outputs.get_tensor(OUT_LANDMARK)).flatten()
 
-        # Nếu độ tự tin > 50% (có khuôn mặt)
-        if score > 0.5:
-            lm = landmark_out[0]
-            
-            # 5. Vẽ 5 điểm Landmarks (10 giá trị x, y)
-            for i in range(0, 10, 2):
-                # Tọa độ xuất ra từ model nằm trong khoảng [0, 1]
-                # Ta cần map nó về kích thước của ảnh hiển thị (320x240)
-                # Lưu ý: Vì ta nạp ảnh resize 224x224 trực tiếp, tỷ lệ aspect ratio có thể bị bóp méo nhẹ so với camera.
-                # Đoạn code này vẽ trực tiếp theo tỷ lệ màn hình.
-                lx = int(lm[i] * img.width())
-                ly = int(lm[i+1] * img.height())
-                
-                # Vẽ điểm màu đỏ lên màn hình
-                img.draw_circle(lx, ly, 3, image.COLOR_RED, -1)
+            score = 1.0 / (1.0 + math.exp(-float(class_arr[0])))
 
-        # In thông số FPS / Thời gian inference
-        img.draw_string(10, 10, f"Infer: {t_infer:.1f}ms", image.COLOR_GREEN)
+            if score > THRESH:
+                for i in range(5):
+                    lx = int(landmark_arr[i * 2]     * cam_w)
+                    ly = int(landmark_arr[i * 2 + 1] * cam_h)
+                    lx = max(0, min(cam_w - 1, lx))
+                    ly = max(0, min(cam_h - 1, ly))
+                    img.draw_circle(lx, ly, 8, LM_COLORS[i], -1)
+                    img.draw_string(lx + 10, ly - 5, LM_NAMES[i], image.COLOR_WHITE)
 
-        # Hiển thị ra màn hình LCD
+                    if frame < 3:
+                        print(f"  {LM_NAMES[i]}: raw=({landmark_arr[i*2]:.3f},{landmark_arr[i*2+1]:.3f}) px=({lx},{ly})")
+
+                img.draw_string(10, 35, f"Face:{score:.2f}", image.COLOR_YELLOW)
+
+        except Exception as e:
+            img.draw_string(2, 35, str(e)[:45], image.COLOR_RED)
+
+        img.draw_string(10, 10, "AIoT FLD", image.COLOR_GREEN)
         disp.show(img)
+        frame += 1
+
 
 if __name__ == "__main__":
     main()

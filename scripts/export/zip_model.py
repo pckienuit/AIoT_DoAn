@@ -2,17 +2,17 @@ import zipfile
 import os
 
 def create_zip():
-    zip_name = "maixhub_upload_fixed.zip"
+    zip_name = os.path.join("models", "exports", "maixhub_upload_fixed.zip")
     with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
         # Add the ONNX model
-        zipf.write("face_detect_model_v3.onnx", arcname="face_detect_model_v3.onnx")
+        zipf.write(os.path.join("models", "exports", "face_detect_model_v3.onnx"), arcname="face_detect_model_v3.onnx")
         
         # Add the images directory explicitly
         # MaixHub requires the 'images' directory entry to exist
         zipf.writestr("images/", "")
         
         # Add all images inside the images directory
-        images_dir = "images"
+        images_dir = os.path.join("data", "images")
         for root, dirs, files in os.walk(images_dir):
             for file in files:
                 if file.endswith('.jpg'):

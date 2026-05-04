@@ -134,8 +134,8 @@ else:
         IMG_DIR   = os.path.join("celebA_dataset", "img_align_celeba", "img_align_celeba")
         LABEL_CSV = "labels.csv"
 
-    MODEL_OUT   = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v8.pth")
-    RESUME_FROM = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v3.pth")
+    MODEL_OUT   = "face_detect_model_vps_finetune_v8.pth"
+    RESUME_FROM = "face_detect_model_vps_finetune_v3.pth"
 
 IMG_W, IMG_H = 178, 218
 
@@ -183,6 +183,10 @@ class CelebADataset(Dataset):
 
     def _make_crop(self, image_full: np.ndarray, bx: float, by: float,
                    bw: float, bh: float, augment_shift: bool = False):
+        """
+        Expand face BBox by 2.14x using BORDER_REPLICATE padding.
+        Replicated pixels preserve edge texture instead of injecting black regions.
+        """
         CROP_SCALE = 2.14
         CROP_AR    = 1.22
 
@@ -196,19 +200,25 @@ class CelebADataset(Dataset):
             crop_y += int(random.uniform(-0.03, 0.03) * crop_h)
 
         H, W = image_full.shape[:2]
-        face_crop = np.zeros((crop_h, crop_w, 3), dtype=np.uint8)
 
-        src_x1, src_y1 = max(0, crop_x),          max(0, crop_y)
-        src_x2, src_y2 = min(W, crop_x + crop_w), min(H, crop_y + crop_h)
-        dst_x1 = max(0, -crop_x)
-        dst_y1 = max(0, -crop_y)
-        dst_x2 = dst_x1 + (src_x2 - src_x1)
-        dst_y2 = dst_y1 + (src_y2 - src_y1)
+        pad_left   = max(0, -crop_x)
+        pad_top    = max(0, -crop_y)
+        pad_right  = max(0, (crop_x + crop_w) - W)
+        pad_bottom = max(0, (crop_y + crop_h) - H)
 
-        if src_x2 > src_x1 and src_y2 > src_y1:
-            face_crop[dst_y1:dst_y2, dst_x1:dst_x2] = image_full[src_y1:src_y2, src_x1:src_x2]
+        if pad_left or pad_top or pad_right or pad_bottom:
+            image_full = cv2.copyMakeBorder(
+                image_full,
+                top=pad_top, bottom=pad_bottom,
+                left=pad_left, right=pad_right,
+                borderType=cv2.BORDER_REPLICATE
+            )
+            crop_x += pad_left
+            crop_y += pad_top
 
-        return face_crop, crop_x, crop_y, crop_w, crop_h
+        face_crop = image_full[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+
+        return face_crop, crop_x - pad_left, crop_y - pad_top, crop_w, crop_h
 
     def __getitem__(self, idx: int):
         row = self.data.iloc[idx]
