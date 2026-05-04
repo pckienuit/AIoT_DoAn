@@ -332,78 +332,36 @@ class CelebADataset(Dataset):
         )
 
 # ==========================================
-# 3. KIẾN TRÚC MÔ HÌNH (MODEL) — v7: ResNet18 backbone
+# 3. KIẾN TRÚC MÔ HÌNH (MODEL) — MobileNetV2
 # ==========================================
 class FaceDetectMultiTask(nn.Module):
-    """
-    v7: ResNet18 thay MobileNetV2
-    - ResNet18: 512 feat + skip connections giữ lại spatial gradients tốt hơn
-    - Landmark Head: GAP + MaxPool concat → 1024 dim → MLP 512→256→10
-    - Spatial Attention: CBAM-style channel giúp focus vào regions có landmark
-    """
     def __init__(self):
         super(FaceDetectMultiTask, self).__init__()
+        mobilenet = models.mobilenet_v2(weights='IMAGENET1K_V1')
+        self.backbone = mobilenet.features
 
-        resnet = models.resnet18(pretrained=True)
-        self.backbone = nn.Sequential(
-            resnet.conv1,      # 64 channels
-            resnet.bn1,
-            resnet.relu,
-            resnet.maxpool,    # after maxpool: 64, 56x56
-            resnet.layer1,      # 64, 56x56
-            resnet.layer2,      # 128, 28x28
-            resnet.layer3,      # 256, 14x14
-            resnet.layer4,      # 512, 7x7
-        )
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
-        self.gmp = nn.AdaptiveMaxPool2d((1, 1))
+        # 3 task heads
+        self.class_head    = nn.Linear(1280, 1)
+        self.bbox_head     = nn.Linear(1280, 4)
 
-        # Spatial attention: lightweight CBAM-style
-        self.sa_conv1 = nn.Conv2d(512, 256, kernel_size=3, padding=1)
-        self.sa_bn1   = nn.BatchNorm2d(256)
-        self.sa_conv2 = nn.Conv2d(256, 1, kernel_size=1)
-
-        self.feat_dim = 1024  # GAP(512) + GMP(512)
-
-        self.class_head = nn.Sequential(
-            nn.Linear(self.feat_dim, 256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(256, 1),
-        )
-        self.bbox_head = nn.Sequential(
-            nn.Linear(self.feat_dim, 256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(256, 4),
-        )
-
+        # Landmark Head: MLP với Dropout
         self.landmark_head = nn.Sequential(
-            nn.Linear(self.feat_dim, 512),
+            nn.Linear(1280, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(512, 256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(256, 10),
         )
 
     def forward(self, x):
-        feat = self.backbone(x)  # [B, 512, 7, 7]
+        features = self.backbone(x)
+        features = self.pool(features)
+        features = torch.flatten(features, 1)
 
-        # Spatial attention
-        sa = torch.relu(self.sa_bn1(self.sa_conv1(feat)))
-        sa = torch.sigmoid(self.sa_conv2(sa))
-        feat = feat * sa
-
-        gap_feat = self.gap(feat).flatten(1)
-        gmp_feat = self.gmp(feat).flatten(1)
-        feat = torch.cat([gap_feat, gmp_feat], dim=1)  # [B, 1024]
-
-        class_out    = self.class_head(feat)
-        bbox_out     = self.bbox_head(feat)
-        landmark_out = self.landmark_head(feat)
+        class_out    = self.class_head(features)
+        bbox_out     = self.bbox_head(features)
+        landmark_out = self.landmark_head(features)
 
         return class_out, bbox_out, landmark_out
 
@@ -447,26 +405,13 @@ def train_model():
             state_dict = checkpoint['model_state_dict']
         else:
             state_dict = checkpoint
-        # v7 kiến trúc hoàn toàn mới (ResNet18 512-dim vs MobileNetV2 1280-dim)
-        # Filter bỏ key có shape không khớp trước khi load
-        model_sd = model.state_dict()
-        filtered = {}
-        skipped = []
-        for k, v in state_dict.items():
-            k_clean = k.replace('module.', '')
-            if k_clean in model_sd and model_sd[k_clean].shape == v.shape:
-                filtered[k_clean] = v
-            else:
-                skipped.append(k)
-        missing, unexpected = model.load_state_dict(filtered, strict=False)
-        print(f"[Resume] Loaded {len(filtered)} compatible keys from '{RESUME_FROM}'.")
-        if skipped:
-            print(f"  Skipped (shape mismatch): {skipped[:10]}{'...' if len(skipped) > 10 else ''}")
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print(f"[Resume] Loaded weights from '{RESUME_FROM}'.")
         start_epoch = 0
         best_val_loss = float('inf')
         resumed = True
     else:
-        print("[Train] Starting from scratch (ImageNet pretrained ResNet18).")
+        print("[Train] Starting from scratch (ImageNet pretrained MobileNetV2).")
 
     # Cấu hình đóng băng và Optimizer dựa trên trạng thái Resume
     head_params = [
@@ -482,7 +427,7 @@ def train_model():
         head_params.append({'params': backbone.parameters(), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
     else:
         _set_backbone_freeze(model, freeze=True)
-        print("[v7-Phase1] Backbone FROZEN — chỉ train Heads (epoch 1-5).")
+        print("[v7-Phase1] Backbone FROZEN — chỉ train Heads.")
 
     optimizer = optim.AdamW(head_params, lr=LEARNING_RATE, weight_decay=1e-4)
 
@@ -512,24 +457,18 @@ def train_model():
         model.train()
         total_loss = 0.0
 
-        # [CS3] Progressive Unfreeze: chỉ áp dụng khi train từ đầu
+        # Progressive Unfreeze: chỉ áp dụng khi train từ đầu
         if not resumed:
             if epoch == UNFREEZE_PHASE2:
-                # Phase 2: mở layer3+layer4 của ResNet18
+                _set_backbone_partial_freeze(model, unfreeze_from_block=16)
                 backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
-                for p in backbone.layer3.parameters():
-                    p.requires_grad = True
-                for p in backbone.layer4.parameters():
-                    p.requires_grad = True
-                optimizer.add_param_group({'params': list(backbone.layer3.parameters()) + list(backbone.layer4.parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
-                print(f"[v7-Phase2] Mở layer3+layer4 | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
+                optimizer.add_param_group({'params': list(backbone[16:].parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
+                print(f"[Phase2] Mở khóa Backbone block 16-18 | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
             elif epoch == UNFREEZE_PHASE3:
-                # Phase 3: mở layer1+layer2, full fine-tune với LR rất nhỏ
+                _set_backbone_freeze(model, freeze=False)
                 backbone = model.module.backbone if isinstance(model, nn.DataParallel) else model.backbone
-                for p in backbone.parameters():
-                    p.requires_grad = True
-                optimizer.add_param_group({'params': list(backbone.layer1.parameters()) + list(backbone.layer2.parameters()), 'lr': 5e-6})
-                print(f"[v7-Phase3] Full fine-tune | LR backbone = 5e-6")
+                optimizer.add_param_group({'params': list(backbone[:16].parameters()), 'lr': LEARNING_RATE * BACKBONE_LR_RATIO})
+                print(f"[Phase3] Mở khóa TOÀN BỘ Backbone | LR backbone = {LEARNING_RATE * BACKBONE_LR_RATIO:.2e}")
 
         # Linear warmup: ramp LR from LR/10 → LR over WARMUP_EPOCHS
         # Only applies when loading weights-only (no optimizer state).
