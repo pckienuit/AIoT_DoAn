@@ -31,10 +31,11 @@ dists = [(1.0 - p, 1) for p in pos] + [(1.0 - n, 0) for n in neg]
 best_acc = 0
 best_th = 0
 
-for th in np.arange(0.1, 1.5, 0.01):
+for th in np.arange(0.001, 0.2, 0.001):
     acc = sum((1 if d < th else 0) == s for d, s in dists) / len(dists)
     if acc > best_acc:
         best_acc = acc
         best_th = th
 
 print(f"Best Acc: {best_acc:.4f} at Threshold: {best_th:.4f}")
+
