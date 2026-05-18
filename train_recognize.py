@@ -39,7 +39,7 @@ MODEL_OUT      = "models/checkpoints/face_recognize_arcface.pth"
 EMBEDDING_SIZE = 128      # 128D cho nhẹ, 512D cho chính xác cao hơn
 BATCH_SIZE     = 128
 EPOCHS         = 30
-LR             = 1e-3
+LR             = 0.05    # SGD dùng LR 0.05 cho Batch=128 (1e-3 cũ quá nhỏ, AdamW gây mode collapse)
 WEIGHT_DECAY   = 5e-4
 ARC_S          = 64.0     # ArcFace scale (thường 64 với dataset lớn)
 ARC_M          = 0.50     # ArcFace margin (góc tăng thêm)
@@ -88,29 +88,6 @@ class RecordIODataset(Dataset):
                     self.keys.append(key)
                     self.offsets[key] = offset
 
-        # Đọc label thực từ .lst file (cột 2 = class_id)
-        # Format: seq_id \t image_path \t class_id \t ...
-        self.key_to_label = {}
-        if lst_path and os.path.exists(lst_path):
-            raw_labels = {}
-            with open(lst_path, "r") as f:
-                for i, line in enumerate(f):
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 3:
-                        key = i + 1              # .idx key là 1-based
-                        cls = int(float(parts[2]))  # class_id thực (column 2)
-                        raw_labels[key] = cls
-
-            # Remap sparse class_id → dense [0, num_classes)
-            unique_cls = sorted(set(raw_labels.values()))
-            remap = {c: i for i, c in enumerate(unique_cls)}
-            self.key_to_label = {k: remap[v] for k, v in raw_labels.items()}
-            print(f"   [Dataset] Loaded labels from .lst: "
-                  f"{len(unique_cls)} unique classes (remapped to dense), "
-                  f"{len(self.key_to_label)} records")
-        else:
-            print("   [Dataset] WARNING: .lst not found, using binary header labels")
-
         self._rec_file = None  # Mở lazy để multiprocessing worker tự mở
 
 
@@ -122,7 +99,7 @@ class RecordIODataset(Dataset):
         """
         Đọc 1 record theo InsightFace RecordIO format:
           [0..8)  : magic(4) + length_flag(4)
-          [8..24) : 16-byte internal header, trong đó bytes 0-3 là int32 label
+          [8..24) : 16-byte internal header: flag(I), label(f), id(Q)
           [24..)  : JPEG image data
         """
         self._open()
@@ -141,6 +118,14 @@ class RecordIODataset(Dataset):
         if len(data) < 26:
             raise IOError(f"Record too short ({len(data)} bytes) at offset {offset}")
 
+        # Parse internal header (16 bytes)
+        header = data[:16]
+        flag, label, idx_id = struct.unpack("IfQ", header)
+        
+        # flag = 2 thường là các identity/list records ở cuối file, không phải ảnh
+        if flag != 0:
+            raise IOError(f"Not an image record (flag={flag})")
+
         # JPEG bắt đầu tại byte 24 của data
         img_bytes = data[24:]
 
@@ -148,36 +133,28 @@ class RecordIODataset(Dataset):
         if len(img_bytes) < 2 or img_bytes[0] != 0xFF or img_bytes[1] != 0xD8:
             raise IOError(f"Invalid JPEG at offset {offset}: first bytes={img_bytes[:4].hex()}")
 
-        return img_bytes
+        return img_bytes, int(label)
 
     def __len__(self):
         return len(self.keys)
 
     def __getitem__(self, idx):
-        # Retry tối đa 10 record khác nếu gặp ảnh hỏng
+        # Retry tối đa 10 record khác nếu gặp ảnh hỏng hoặc list record
         for attempt in range(10):
             try:
                 key    = self.keys[(idx + attempt) % len(self.keys)]
                 offset = self.offsets[key]
 
-                # Lấy label từ .lst (chính xác) nếu có, fallback về binary header
-                if self.key_to_label:
-                    label = self.key_to_label.get(key, -1)
-                    if label < 0:
-                        raise ValueError(f"Key {key} not found in .lst")
-                    img_bytes = self._read_record(offset)
-                else:
-                    # Legacy: đọc từ binary header (có thể sai)
-                    img_bytes = self._read_record(offset)
-                    label = 0  # placeholder
+                img_bytes, label = self._read_record(offset)
 
                 img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                 if self.transform:
                     img = self.transform(img)
                 return img, label
             except Exception as e:
-                if attempt == 0:
-                    print(f"[Dataset] Skip bad record idx={idx}: {e}")
+                # Chỉ log ở attempt đầu tiên để tránh rác console
+                if attempt == 0 and "Not an image record" not in str(e):
+                    print(f"[Dataset] Skip bad record idx={idx} (key={key}): {e}")
         # Fallback: trả về ảnh đen với label -1 (được bỏ trong training loop)
         dummy = torch.zeros(3, 112, 112)
         return dummy, -1
@@ -375,6 +352,7 @@ def train():
         model   = nn.DataParallel(model)
         arcface = nn.DataParallel(arcface)
 
+    # Sử dụng SGD với Momentum (Chuẩn cho ArcFace) thay vì AdamW (gây Mode Collapse)
     optimizer = optim.SGD(
         [{"params": model.parameters()},
          {"params": arcface.parameters()}],
@@ -396,7 +374,8 @@ def train():
     for epoch in range(EPOCHS):
         model.train()
         arcface.train()
-        total_loss = 0.0
+        total_loss  = 0.0
+        num_batches = 0  # đếm batch thực tế (tránh chia sai khi có None batch)
 
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{EPOCHS}", unit="batch")
         for images, labels in pbar:
@@ -405,7 +384,7 @@ def train():
             images = images.to(device)
             labels = labels.to(device).long()
 
-            # Filter nốt nếu có label âm lọc hướt qua collate
+            # Filter nốt nếu có label âm lọt qua collate
             valid_mask = labels >= 0
             if not valid_mask.any():
                 continue
@@ -424,16 +403,19 @@ def train():
                 loss = loss.mean()
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            # Clip gradient CẢ model VÀ arcface (arcface weight cũng có grad)
+            all_params = list(model.parameters()) + list(arcface.parameters())
+            torch.nn.utils.clip_grad_norm_(all_params, GRAD_CLIP)
             optimizer.step()
 
-            total_loss += loss.item()
+            total_loss  += loss.item()
+            num_batches += 1
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         scheduler.step()
-        avg_loss = total_loss / len(dataloader)
+        avg_loss = total_loss / max(num_batches, 1)
         lr_now   = optimizer.param_groups[0]["lr"]
-        print(f"Epoch [{epoch+1}/{EPOCHS}] Loss: {avg_loss:.4f} | LR: {lr_now:.2e}")
+        print(f"Epoch [{epoch+1}/{EPOCHS}] Loss: {avg_loss:.4f} | LR: {lr_now:.2e} | Batches: {num_batches}")
 
         # LFW Evaluation mỗi 5 epoch
         if lfw_pairs and (epoch + 1) % 5 == 0:
