@@ -45,7 +45,7 @@ DETECT_THRESH   = 0.85
 # Start with a more lenient threshold. Use '+'/'-' in runtime to calibrate.
 # Typical same-person cosine distance: 0.02 ~ 0.15
 # Typical diff-person cosine distance: 0.15 ~ 0.50
-RECOG_THRESH    = 0.30
+RECOG_THRESH    = 0.018
 THRESH_STEP     = 0.002
 
 CROP_SCALE = 2.14
