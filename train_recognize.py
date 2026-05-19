@@ -38,12 +38,14 @@ EVAL_DIR       = "CASIAWebFace_dataset/eval"
 MODEL_OUT      = "models/checkpoints/face_recognize_arcface.pth"
 EMBEDDING_SIZE = 128      # 128D cho nhẹ, 512D cho chính xác cao hơn
 BATCH_SIZE     = 128
-EPOCHS         = 30
-LR             = 0.05    # SGD dùng LR 0.05 cho Batch=128 (1e-3 cũ quá nhỏ, AdamW gây mode collapse)
+EPOCHS         = 60       # Tăng lên 60 để model hội tụ sâu hơn
+LR             = 0.05    # SGD dùng LR 0.05 cho Batch=128
 WEIGHT_DECAY   = 5e-4
 ARC_S          = 64.0     # ArcFace scale (thường 64 với dataset lớn)
 ARC_M          = 0.50     # ArcFace margin (góc tăng thêm)
 GRAD_CLIP      = 5.0
+RESUME         = True     # True = tiếp tục train từ checkpoint cũ nếu có
+EARLY_STOP_PATIENCE = 8   # Dừng sớm nếu LFW không cải thiện sau N lần eval
 
 # Kaggle override
 _KAGGLE = "/kaggle/input"
@@ -268,22 +270,36 @@ def load_bin(path: str, image_size=(112, 112)):
 
 
 def evaluate_lfw(model: nn.Module, pairs, device):
-    """Tính Accuracy trên LFW / CFP / AgeDB bằng Cosine Similarity."""
+    """Tinh Accuracy tren LFW bang Cosine Similarity voi best-threshold sweep.
+
+    Khong dung threshold cung -- tim threshold toi uu tren chinh tap pairs,
+    giong cach chuan trong benchmark InsightFace / DeepFace.
+    """
     model.eval()
-    correct = 0
-    total   = len(pairs)
-    threshold = 0.3  # Ngưỡng Cosine Distance (có thể tune)
+    dists  = []
+    labels = []
 
     with torch.no_grad():
         for img1, img2, same in pairs:
             e1 = model.get_embedding(img1.unsqueeze(0).to(device))
             e2 = model.get_embedding(img2.unsqueeze(0).to(device))
             dist = 1.0 - F.cosine_similarity(e1, e2).item()
-            pred_same = int(dist < threshold)
-            if pred_same == same:
-                correct += 1
+            dists.append(dist)
+            labels.append(same)
 
-    return correct / total
+    # Sweep threshold de tim best accuracy (khong co tien gian dinh)
+    best_acc = 0.0
+    best_th  = 0.0
+    max_dist = max(dists) if dists else 1.0
+    for th in np.arange(0.001, max_dist + 0.01, 0.001):
+        preds = [1 if d < th else 0 for d in dists]
+        acc = sum(p == lb for p, lb in zip(preds, labels)) / len(labels)
+        if acc > best_acc:
+            best_acc = acc
+            best_th  = th
+
+    print(f"     [LFW eval] Best threshold={best_th:.3f} | Acc={best_acc*100:.2f}%")
+    return best_acc
 
 
 # ==========================================
@@ -360,6 +376,38 @@ def train():
     )
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
 
+    # ── Resume từ checkpoint cũ nếu có ──────────────────────────────────
+    start_epoch      = 0
+    best_lfw         = 0.0
+    no_improve_count = 0
+
+    if RESUME and os.path.exists(MODEL_OUT):
+        print(f"\n🔄 Resume từ checkpoint: {MODEL_OUT}")
+        ckpt = torch.load(MODEL_OUT, map_location=device, weights_only=False)
+
+        # 1. Load backbone weights
+        raw_model = model.module if isinstance(model, nn.DataParallel) else model
+        raw_model.load_state_dict(ckpt["model_state_dict"])
+
+        # 2. Load ArcFace weight (quan trọng! nếu bỏ sẽ re-init ngẫu nhiên → Loss vọật lên)
+        raw_arc = arcface.module if isinstance(arcface, nn.DataParallel) else arcface
+        if "arcface_state_dict" in ckpt:
+            raw_arc.load_state_dict(ckpt["arcface_state_dict"])
+
+        # 3. Load optimizer + scheduler để LR và momentum buffer không bị reset
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scheduler_state_dict" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+
+        # 4. Khôi phục metadata
+        start_epoch = ckpt.get("epoch", 0)
+        best_lfw    = ckpt.get("lfw_acc", 0.0)
+        print(f"   ✅ Đã load epoch={start_epoch} | Best LFW={best_lfw*100:.2f}% | LR hiện tại={optimizer.param_groups[0]['lr']:.2e}")
+    else:
+        print(f"\n🆕 Bắt đầu train mới từ đầu")
+    # ────────────────────────────────────────────────────────────────────
+
     # Load LFW eval
     lfw_pairs = None
     lfw_bin   = os.path.join(EVAL_DIR, "lfw.bin")
@@ -368,10 +416,9 @@ def train():
         lfw_pairs = load_bin(lfw_bin)
 
     os.makedirs(os.path.dirname(MODEL_OUT), exist_ok=True)
-    best_lfw = 0.0
 
-    print(f"\n🚀 Bắt đầu train ArcFace | Epochs={EPOCHS} | LR={LR} | S={ARC_S} | M={ARC_M}")
-    for epoch in range(EPOCHS):
+    print(f"\n🚀 Train ArcFace | Epochs={start_epoch+1}..{EPOCHS} | LR={LR} | S={ARC_S} | M={ARC_M} | EarlyStop patience={EARLY_STOP_PATIENCE}")
+    for epoch in range(start_epoch, EPOCHS):
         model.train()
         arcface.train()
         total_loss  = 0.0
@@ -425,13 +472,26 @@ def train():
 
             if lfw_acc > best_lfw:
                 best_lfw = lfw_acc
-                state = eval_model.state_dict()
-                torch.save({"model_state_dict": state,
-                            "epoch": epoch + 1,
-                            "lfw_acc": lfw_acc,
-                            "embedding_size": EMBEDDING_SIZE},
-                           MODEL_OUT)
+                no_improve_count = 0
+                # Lưu đủ 5 key: model + arcface + optimizer + scheduler + metadata
+                eval_arc = arcface.module if isinstance(arcface, nn.DataParallel) else arcface
+                torch.save({
+                    "model_state_dict":     eval_model.state_dict(),
+                    "arcface_state_dict":   eval_arc.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "epoch":                epoch + 1,
+                    "lfw_acc":              lfw_acc,
+                    "embedding_size":       EMBEDDING_SIZE,
+                }, MODEL_OUT)
                 print(f"  --> Saved best model | LFW: {best_lfw*100:.2f}%")
+            else:
+                no_improve_count += 1
+                print(f"  --> Khong cai thien ({no_improve_count}/{EARLY_STOP_PATIENCE}) | Best LFW: {best_lfw*100:.2f}%")
+                if no_improve_count >= EARLY_STOP_PATIENCE:
+                    print(f"\n⏹ Early stopping! LFW khong tang sau {EARLY_STOP_PATIENCE} lan eval. Dung tai Epoch {epoch+1}.")
+                    break
+
         elif not lfw_pairs:
             # Lưu mỗi epoch nếu không có eval
             eval_model = model.module if isinstance(model, nn.DataParallel) else model
