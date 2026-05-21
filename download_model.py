@@ -10,8 +10,8 @@ PORT = int(os.getenv('VPS_PORT', 22))
 USER = os.getenv('VPS_USER')
 PASS = os.getenv('VPS_PASS')
 
-REMOTE_MODEL = "/root/models/checkpoints/face_recognize_arcface.pth"
-LOCAL_MODEL = "models/checkpoints/face_recognize_arcface.pth"
+REMOTE_MODEL = "/root/models/checkpoints/face_recognize_arcface_p3.pth"
+LOCAL_MODEL = "models/checkpoints/face_recognize_arcface_p3.pth"
 
 def download_file():
     print(f"=== Kéo model Face Recognition từ VPS ===")

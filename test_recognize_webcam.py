@@ -29,7 +29,7 @@ from train_recognize import FaceRecognizeNet
 # CONFIG
 # ─────────────────────────────────────────────
 DETECT_MODEL_PATH = os.path.join("models", "checkpoints", "face_detect_model_vps_finetune_v9.pth")
-RECOG_MODEL_PATH  = os.path.join("models", "checkpoints", "face_recognize_arcface.pth")
+RECOG_MODEL_PATH  = os.path.join("models", "checkpoints", "face_recognize_arcface_p3.pth")
 EMBEDDING_SIZE    = 128
 
 # Standard 5-point coords for 112x112 aligned face (InsightFace convention)
