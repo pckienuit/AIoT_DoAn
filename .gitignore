@@ -1,2 +1,11 @@
 *dataset*
 .env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.vscode/
+models/checkpoints/
+models/exports/
+.env
