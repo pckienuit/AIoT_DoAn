@@ -7,6 +7,12 @@ trigger: always_on
 **0. 🚨 MCP CODEGRAPH (CRITICAL)**
 - **MANDATORY:** Use `mcp codegraph` to read and understand the project architecture/context BEFORE making ANY codebase changes. Skip ONLY if the codebase is already fully understood.
 
+**0.1 📋 PROJECT PLAN (READ FIRST — SKIP IF ALREADY READ THIS SESSION)**
+- **MANDATORY:** Read `docs/development_plan.md` at the START of every new session before taking any action.
+- This file contains the full system architecture (3 blocks: Web, Server, Edge), tech stack decisions (Qdrant Vector DB, ArcFace P3, V9 Landmarks), and the phased development roadmap.
+- **Skip condition:** If the plan has already been read in the current conversation, do NOT re-read it — proceed directly.
+- After reading, announce: `📋 **Development plan loaded. System: Flight Info Lookup via Face Recognition (Web → Qdrant Server → MaixCAM Edge).**`
+
 **1. AGENTS, ROUTING & PROTOCOL**
 - **Load Flow:** Read P0(GEMINI.md) > P1(Agent.md) > P2(SKILL.md matching `skills:` frontmatter). Read > Understand > Apply. NEVER SKIP.
 - **Routing:** Web=`frontend-specialist`, Mobile=`mobile-developer` (NO web agents for mobile), Backend=`backend-specialist`, Multi=`orchestrator`.

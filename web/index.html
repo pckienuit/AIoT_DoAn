@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Detection & Alignment AIoT</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- CDN Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #131b2e;
+            --card-border: #1e293b;
+            --accent-primary: #3b82f6;
+            --accent-success: #10b981;
+            --accent-warning: #f59e0b;
+            --accent-error: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #64748b;
+            --radius: 8px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.5;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        header {
+            max-width: 1200px;
+            margin: 0 auto 2rem auto;
+            text-align: center;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 1.5rem;
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            border-color: #334155;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .card h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 0.75rem;
+            color: #93c5fd;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4/3;
+            background-color: #020617;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #1e293b;
+        }
+
+        #input_video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #overlay_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .file-upload-wrapper {
+            position: relative;
+            border: 2px dashed var(--card-border);
+            border-radius: 6px;
+            padding: 2rem;
+            text-align: center;
+            background-color: #090d16;
+            cursor: pointer;
+            transition: var(--transition);
+            margin-bottom: 1rem;
+        }
+
+        .file-upload-wrapper:hover {
+            border-color: var(--accent-primary);
+            background-color: #0f172a;
+        }
+
+        .file-upload-wrapper input[type="file"] {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .crop-showcase {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+            margin: 1rem 0;
+        }
+
+        .crop-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .crop-box canvas {
+            border: 1px solid var(--card-border);
+            background-color: #020617;
+            border-radius: 4px;
+            width: 112px;
+            height: 112px;
+        }
+
+        .crop-box span {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            background-color: #1e293b;
+            color: var(--text-main);
+        }
+
+        .status-badge.success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--accent-success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .data-display {
+            margin-top: 1rem;
+        }
+
+        .data-group {
+            margin-bottom: 0.75rem;
+        }
+
+        .data-group label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .data-group textarea {
+            width: 100%;
+            background-color: #070a12;
+            border: 1px solid var(--card-border);
+            border-radius: 4px;
+            color: #38bdf8;
+            font-family: monospace;
+            font-size: 0.75rem;
+            padding: 0.5rem;
+            resize: none;
+            outline: none;
+        }
+
+        /* Center Result Panel */
+        .result-panel {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .match-score {
+            font-family: 'Outfit', sans-serif;
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--accent-success);
+            line-height: 1;
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
+        }
+
+        .match-label {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .system-status {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Benchmark Section */
+        .benchmark-section {
+            grid-column: 1 / -1;
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .benchmark-section h3 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.25rem;
+            color: #93c5fd;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 0.5rem;
+        }
+
+        .benchmark-controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 0.6rem 1.25rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            font-family: inherit;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn:disabled {
+            background: #1e293b;
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .benchmark-status {
+            font-size: 0.9rem;
+            font-style: italic;
+            color: var(--text-muted);
+        }
+
+        .benchmark-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            display: none;
+        }
+
+        .benchmark-table th, .benchmark-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--card-border);
+            font-size: 0.9rem;
+        }
+
+        .benchmark-table th {
+            background-color: #0b0f19;
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+
+        .benchmark-table tr:hover td {
+            background-color: rgba(30, 41, 59, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Face Detection & Alignment AIoT</h1>
+        <p>Two-Pass Pipeline: YOLO Proposal → V9 MobileNetV2 Landmarks → Aligned Crop → ArcFace P3 Embedding</p>
+    </header>
+
+    <div class="container">
+
+        <!-- Result Card at Top of Content -->
+        <div class="result-panel">
+            <div class="system-status" id="status">Initializing system...</div>
+            <div class="match-score" id="match-score">–</div>
+            <div class="match-label" id="match-label">Reference image missing</div>
+        </div>
+
+        <!-- Stream 1: Camera -->
+        <div class="card">
+            <h2>📷 Stream 1: Camera Input (Real-time Pipeline)</h2>
+            <div class="video-container">
+                <video id="input_video" autoplay playsinline></video>
+                <canvas id="overlay_canvas" width="640" height="480"></canvas>
+            </div>
+            
+            <div class="crop-showcase">
+                <div class="crop-box">
+                    <canvas id="cam_crop_canvas" width="112" height="112"></canvas>
+                    <span>Aligned Face (112x112)</span>
+                </div>
+                <div>
+                    <span class="status-badge success" id="cam-status">Active</span>
+                </div>
+            </div>
+
+            <div class="data-display">
+                <div class="data-group">
+                    <label>Camera Vector IV (AES-GCM)</label>
+                    <textarea id="cam-iv" rows="1" readonly></textarea>
+                </div>
+                <div class="data-group">
+                    <label>Camera Vector Ciphertext (Base64)</label>
+                    <textarea id="cam-ct" rows="2" readonly></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stream 2: Reference Image -->
+        <div class="card">
+            <h2>📁 Stream 2: Reference Image (Static Pipeline)</h2>
+            
+            <div class="file-upload-wrapper">
+                <p>Drag & Drop or Click to Upload Image</p>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">PNG, JPG up to 10MB</span>
+                <input type="file" id="ref-file-input" accept="image/*">
+            </div>
+
+            <div class="crop-showcase">
+                <div class="crop-box">
+                    <canvas id="ref_crop_canvas" width="112" height="112"></canvas>
+                    <span>Aligned Face (112x112)</span>
+                </div>
+                <div>
+                    <span class="status-badge" id="ref-status">No Reference Image</span>
+                </div>
+            </div>
+
+            <div class="data-display">
+                <div class="data-group">
+                    <label>Reference Vector IV (AES-GCM)</label>
+                    <textarea id="ref-iv" rows="1" readonly></textarea>
+                </div>
+                <div class="data-group">
+                    <label>Reference Vector Ciphertext (Base64)</label>
+                    <textarea id="ref-ct" rows="2" readonly></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Web Benchmark Panel -->
+        <div class="benchmark-section">
+            <h3>⏱️ Web-Based Model Performance Benchmark (WASM Execution)</h3>
+            <div class="benchmark-controls">
+                <button class="btn" id="run-benchmark-btn">Run WASM Benchmark</button>
+                <div class="benchmark-status" id="benchmark-status">Ready to benchmark...</div>
+            </div>
+            
+            <table class="benchmark-table" id="benchmark-table">
+                <thead>
+                    <tr>
+                        <th>Model Name</th>
+                        <th style="text-align: center;">Input Tensor Shape</th>
+                        <th style="text-align: right;">Avg Latency (ms)</th>
+                        <th style="text-align: right;">Throughput (FPS)</th>
+                    </tr>
+                </thead>
+                <tbody id="benchmark-tbody">
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+<script>
+// ════════════════════════════════════════════════
+//  DOM References
+// ════════════════════════════════════════════════
+const videoElement  = document.getElementById('input_video');
+const overlayCanvas = document.getElementById('overlay_canvas');
+const overlayCtx    = overlayCanvas.getContext('2d');
+
+const camCropCanvas = document.getElementById('cam_crop_canvas');
+const camCropCtx    = camCropCanvas.getContext('2d');
+
+const refCropCanvas = document.getElementById('ref_crop_canvas');
+const refCropCtx    = refCropCanvas.getContext('2d');
+
+const statusEl      = document.getElementById('status');
+const refStatusEl   = document.getElementById('ref-status');
+const refFileInput  = document.getElementById('ref-file-input');
+
+const camIvEl       = document.getElementById('cam-iv');
+const camCtEl       = document.getElementById('cam-ct');
+const refIvEl       = document.getElementById('ref-iv');
+const refCtEl       = document.getElementById('ref-ct');
+
+const matchScoreEl  = document.getElementById('match-score');
+const matchLabelEl  = document.getElementById('match-label');
+
+const benchmarkBtn    = document.getElementById('run-benchmark-btn');
+const benchmarkStatus = document.getElementById('benchmark-status');
+const benchmarkTable  = document.getElementById('benchmark-table');
+const benchmarkTbody  = document.getElementById('benchmark-tbody');
+
+// ════════════════════════════════════════════════
+//  Global State variables
+// ════════════════════════════════════════════════
+let ortSessionSFaceFP32 = null;
+let ortSessionSFaceINT8 = null;
+let ortSessionV9 = null;
+let ortSessionP3 = null;
+let aesKey = null;
+
+// Encryption results for both channels
+let camEncrypted = null;  // { iv: Uint8Array, ct: ArrayBuffer }
+let refEncrypted = null;  // { iv: Uint8Array, ct: ArrayBuffer }
+
+// Landmark EMA State for Stream 1
+let emaLm = null;
+
+// Control camera loop when ref image processing occurs
+let camPaused = false;
+
+// ════════════════════════════════════════════════
+//  AES-GCM Crypto Helpers
+// ════════════════════════════════════════════════
+async function generateAESKey() {
+    aesKey = await crypto.subtle.generateKey(
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+    );
+}
+
+async function aesEncrypt(float32Array) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        aesKey,
+        float32Array.buffer
+    );
+    return { iv, ct };
+}
+
+async function aesDecrypt(encrypted) {
+    const buf = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: encrypted.iv },
+        aesKey,
+        encrypted.ct
+    );
+    return new Float32Array(buf);
+}
+
+function toHex(u8) {
+    return Array.from(u8).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function toBase64(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+
+// ════════════════════════════════════════════════
+//  ONNX Preprocessing Inputs
+// ════════════════════════════════════════════════
+function getTensorFromCanvasV9(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, 224, 224).data;
+    const area = 224 * 224;
+    const float32Data = new Float32Array(3 * area);
+    
+    // RGB format, normalized to [0.0, 1.0]
+    let j = 0;
+    for (let i = 0; i < imageData.length; i += 4) {
+        float32Data[j]            = imageData[i] / 255.0;     // Red
+        float32Data[j + area]     = imageData[i + 1] / 255.0; // Green
+        float32Data[j + 2 * area] = imageData[i + 2] / 255.0; // Blue
+        j++;
+    }
+    return new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
+}
+
+function getTensorFromCanvasP3(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, 112, 112).data;
+    const area = 112 * 112;
+    const float32Data = new Float32Array(3 * area);
+    
+    // RGB format, normalized to [-1.0, 1.0] -> (val - 127.5) / 128.0
+    let j = 0;
+    for (let i = 0; i < imageData.length; i += 4) {
+        float32Data[j]            = (imageData[i] - 127.5) / 128.0;     // Red
+        float32Data[j + area]     = (imageData[i + 1] - 127.5) / 128.0; // Green
+        float32Data[j + 2 * area] = (imageData[i + 2] - 127.5) / 128.0; // Blue
+        j++;
+    }
+    return new ort.Tensor('float32', float32Data, [1, 3, 112, 112]);
+}
+
+// ════════════════════════════════════════════════
+//  System Init
+// ════════════════════════════════════════════════
+async function initONNX() {
+    try {
+        statusEl.textContent = 'Loading ONNX models (SFace FP32/INT8, V9, P3)...';
+        
+        ortSessionSFaceFP32 = await ort.InferenceSession.create(
+            '/models/face_recognition_sface_2021dec.onnx',
+            { executionProviders: ['wasm'] }
+        );
+        ortSessionSFaceINT8 = await ort.InferenceSession.create(
+            '/models/face_recognition_sface_2021dec_int8.onnx',
+            { executionProviders: ['wasm'] }
+        );
+        ortSessionV9 = await ort.InferenceSession.create(
+            '/models/face_detect_v9.onnx',
+            { executionProviders: ['wasm'] }
+        );
+        ortSessionP3 = await ort.InferenceSession.create(
+            '/models/face_recognize_arcface_p3.onnx',
+            { executionProviders: ['wasm'] }
+        );
+        
+        statusEl.textContent = '⚡ V9 + ArcFace P3 Pipeline Loaded & Ready!';
+    } catch(e) {
+        statusEl.textContent = 'Model Loading Error: ' + e.message;
+        statusEl.style.color = 'var(--accent-error)';
+        console.error(e);
+    }
+}
+
+// ════════════════════════════════════════════════
+//  Vector Metrics & Matching
+// ════════════════════════════════════════════════
+function l2Normalize(v) {
+    let norm = 0;
+    for (let i = 0; i < v.length; i++) norm += v[i] * v[i];
+    norm = Math.sqrt(norm);
+    
+    const out = new Float32Array(v.length);
+    if (norm < 1e-12) return out;
+    for (let i = 0; i < v.length; i++) out[i] = v[i] / norm;
+    return out;
+}
+
+function cosineSim(a, b) {
+    let dot = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+    }
+    return dot;
+}
+
+async function decryptAndMatch() {
+    if (!camEncrypted || !refEncrypted) return;
+
+    try {
+        const rawCam = await aesDecrypt(camEncrypted);
+        const rawRef = await aesDecrypt(refEncrypted);
+
+        if (rawCam.length === 0 || rawRef.length === 0) {
+            matchLabelEl.textContent = '⚠️ Empty vector - check ONNX output';
+            return;
+        }
+
+        const vecCam = l2Normalize(rawCam);
+        const vecRef = l2Normalize(rawRef);
+        const sim = cosineSim(vecCam, vecRef);
+        const dist = 1.0 - sim;
+
+        matchScoreEl.textContent = (sim * 100).toFixed(1) + '%';
+
+        // RECOG_THRESH on device = 0.045 distance
+        if (dist <= 0.045) {
+            matchLabelEl.textContent = `✅ Face Matched (dist=${dist.toFixed(4)})`;
+            matchScoreEl.style.color = 'var(--accent-success)';
+            matchLabelEl.style.color = 'var(--accent-success)';
+        } else if (dist <= 0.08) {
+            matchLabelEl.textContent = `⚠️ Likely Matched (dist=${dist.toFixed(4)})`;
+            matchScoreEl.style.color = 'var(--accent-warning)';
+            matchLabelEl.style.color = 'var(--accent-warning)';
+        } else {
+            matchLabelEl.textContent = `❌ No Match (dist=${dist.toFixed(4)})`;
+            matchScoreEl.style.color = 'var(--accent-error)';
+            matchLabelEl.style.color = 'var(--accent-error)';
+        }
+    } catch (e) {
+        console.error('[Decryption Match Error]:', e);
+    }
+}
+
+// ════════════════════════════════════════════════
+//  Render Bounding Boxes
+// ════════════════════════════════════════════════
+function drawBoxes(detections) {
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    detections.forEach((det, idx) => {
+        const b = det.boundingBox;
+        let x, y, w, h;
+        if (b.xCenter !== undefined) {
+            w = b.width  * overlayCanvas.width;
+            h = b.height * overlayCanvas.height;
+            x = b.xCenter * overlayCanvas.width  - w / 2;
+            y = b.yCenter * overlayCanvas.height - h / 2;
+        } else if (b.xMin !== undefined) {
+            x = b.xMin * overlayCanvas.width;
+            y = b.yMin * overlayCanvas.height;
+            w = b.width  * overlayCanvas.width;
+            h = b.height * overlayCanvas.height;
+        } else return;
+
+        overlayCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
+        overlayCtx.lineWidth   = 2;
+        overlayCtx.strokeRect(x, y, w, h);
+        overlayCtx.font      = '600 12px Inter';
+        overlayCtx.fillStyle = '#60a5fa';
+        overlayCtx.fillText(`Face ${idx+1}`, x, y > 16 ? y - 4 : y + 14);
+    });
+}
+
+// ════════════════════════════════════════════════
+//  Camera Stream Handlers (Two-Pass Pipeline)
+// ════════════════════════════════════════════════
+const MP_URL = f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`;
+const faceDetectionCam = new FaceDetection({ locateFile: MP_URL });
+faceDetectionCam.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+
+faceDetectionCam.onResults(async (results) => {
+    if (camPaused) return;
+
+    if (!results.detections || results.detections.length === 0) {
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        emaLm = null;
+        return;
+    }
+
+    drawBoxes(results.detections);
+    if (!ortSessionV9 || !ortSessionP3) return;
+
+    const bbox = results.detections[0].boundingBox;
+    const srcW = videoElement.videoWidth;
+    const srcH = videoElement.videoHeight;
+    
+    // Bounding Box to Pixels
+    let x, y, w, h;
+    if (bbox.xCenter !== undefined) {
+        w = bbox.width  * srcW;
+        h = bbox.height * srcH;
+        x = bbox.xCenter * srcW - w / 2;
+        y = bbox.yCenter * srcH - h / 2;
+    } else {
+        x = bbox.xMin  * srcW;
+        y = bbox.yMin  * srcH;
+        w = bbox.width * srcW;
+        h = bbox.height* srcH;
+    }
+
+    // Adaptive padding based on CelebA crop ratio (178 x 218)
+    const cropW = w * 1.5;
+    const cropH = h * 1.8;
+    const cropX = x + w / 2 - cropW / 2;
+    const cropY = y + h * 0.4 - cropH * 0.51;
+
+    // Crop to 224x224 canvas for V9 landmarks
+    const v9Canvas = document.createElement('canvas');
+    v9Canvas.width = 224;
+    v9Canvas.height = 224;
+    const v9Ctx = v9Canvas.getContext('2d');
+    
+    v9Ctx.fillStyle = 'black';
+    v9Ctx.fillRect(0, 0, 224, 224);
+
+    const sX = Math.max(0, cropX);
+    const sY = Math.max(0, cropY);
+    const sW = Math.min(srcW - sX, cropX + cropW - sX);
+    const sH = Math.min(srcH - sY, cropY + cropH - sY);
+
+    if (sW > 0 && sH > 0) {
+        const dX = (sX - cropX) * (224 / cropW);
+        const dY = (sY - cropY) * (224 / cropH);
+        const dW = sW * (224 / cropW);
+        const dH = sH * (224 / cropH);
+        v9Ctx.drawImage(videoElement, sX, sY, sW, sH, dX, dY, dW, dH);
+    }
+
+    try {
+        // Step 1: Run V9 Landmark Model
+        const feedsV9 = {};
+        feedsV9[ortSessionV9.inputNames[0]] = getTensorFromCanvasV9(v9Canvas);
+        const outV9 = await ortSessionV9.run(feedsV9);
+        
+        let classKey = ortSessionV9.outputNames.find(n => n.includes('class')) || ortSessionV9.outputNames[0];
+        let landmarkKey = ortSessionV9.outputNames.find(n => n.includes('landmark')) || ortSessionV9.outputNames[2] || ortSessionV9.outputNames[1];
+        
+        const scoreRaw = outV9[classKey].data[0];
+        const score = 1.0 / (1.0 + Math.exp(-scoreRaw));
+        const landmarks = outV9[landmarkKey].data;
+
+        // Apply EMA Landmark Smoothing
+        if (emaLm === null) {
+            emaLm = Array.from(landmarks);
+        } else {
+            for (let i = 0; i < 10; i++) {
+                emaLm[i] = 0.35 * landmarks[i] + 0.65 * emaLm[i];
+            }
+        }
+
+        if (score <= 0.40) {
+            return; // Score too low
+        }
+
+        // Project and Draw Landmarks
+        const lmAbs = [];
+        const lmColors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#f8fafc'];
+        for (let i = 0; i < 5; i++) {
+            const lx = emaLm[i * 2] * cropW + cropX;
+            const ly = emaLm[i * 2 + 1] * cropH + cropY;
+            lmAbs.push(lx, ly);
+            
+            overlayCtx.fillStyle = lmColors[i];
+            overlayCtx.beginPath();
+            overlayCtx.arc(lx, ly, 4, 0, 2 * Math.PI);
+            overlayCtx.fill();
+        }
+
+        // Step 2: Crop & align face to 112x112 using landmarks
+        const xs = [lmAbs[0], lmAbs[2], lmAbs[4], lmAbs[6], lmAbs[8]];
+        const ys = [lmAbs[1], lmAbs[3], lmAbs[5], lmAbs[7], lmAbs[9]];
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const centerX = xs.reduce((a, b) => a + b, 0) / 5.0;
+        const centerY = ys.reduce((a, b) => a + b, 0) / 5.0;
+
+        const faceW = maxX - minX;
+        const faceH = maxY - minY;
+        const side = Math.max(faceW * 2.4, faceH * 2.0, 64);
+        const recogCropX = centerX - side / 2;
+        const recogCropY = centerY - side * 0.45;
+
+        // Draw aligned crop into camCropCanvas
+        camCropCtx.fillStyle = 'black';
+        camCropCtx.fillRect(0, 0, 112, 112);
+
+        const rSrcX = Math.max(0, recogCropX);
+        const rSrcY = Math.max(0, recogCropY);
+        const rSrcW = Math.min(srcW - rSrcX, recogCropX + side - rSrcX);
+        const rSrcH = Math.min(srcH - rSrcY, recogCropY + side - rSrcY);
+
+        if (rSrcW > 0 && rSrcH > 0) {
+            const rDstX = (rSrcX - recogCropX) * (112 / side);
+            const rDstY = (rSrcY - recogCropY) * (112 / side);
+            const rDstW = rSrcW * (112 / side);
+            const rDstH = rSrcH * (112 / side);
+            camCropCtx.drawImage(videoElement, rSrcX, rSrcY, rSrcW, rSrcH, rDstX, rDstY, rDstW, rDstH);
+        }
+
+        // Step 3: Run P3 model on aligned face
+        const feedsP3 = {};
+        feedsP3[ortSessionP3.inputNames[0]] = getTensorFromCanvasP3(camCropCanvas);
+        const outP3 = await ortSessionP3.run(feedsP3);
+        const outKeyP3 = ortSessionP3.outputNames[0];
+        const vec = outP3[outKeyP3].data;
+
+        // Step 4: AES-GCM Encryption
+        camEncrypted = await aesEncrypt(vec);
+        camIvEl.value = toHex(camEncrypted.iv);
+        camCtEl.value = toBase64(camEncrypted.ct);
+
+        await decryptAndMatch();
+
+    } catch (e) {
+        console.error('[Stream 1 Inference Error]:', e);
+    }
+});
+
+// ════════════════════════════════════════════════
+//  Stream 2: Upload Ref Image (Two-Pass Pipeline)
+// ════════════════════════════════════════════════
+let faceDetectionRef = null;
+
+async function getRefDetector() {
+    if (faceDetectionRef) return faceDetectionRef;
+    faceDetectionRef = new FaceDetection({ locateFile: MP_URL });
+    faceDetectionRef.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+    await faceDetectionRef.initialize();
+    return faceDetectionRef;
+}
+
+refFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    refStatusEl.textContent = 'Detecting face...';
+    refStatusEl.className = 'status-badge';
+
+    camPaused = true;
+
+    const img = new Image();
+    img.onload = async () => {
+        const tmp = document.createElement('canvas');
+        tmp.width  = img.width;
+        tmp.height = img.height;
+        tmp.getContext('2d').drawImage(img, 0, 0);
+
+        try {
+            const detector = await getRefDetector();
+            const results  = await new Promise(resolve => {
+                detector.onResults(resolve);
+                detector.send({ image: tmp });
+            });
+
+            if (!results.detections || results.detections.length === 0) {
+                refStatusEl.textContent = '⚠️ Face not found';
+                refStatusEl.className = 'status-badge error';
+                return;
+            }
+
+            if (!ortSessionV9 || !ortSessionP3) return;
+
+            const bbox = results.detections[0].boundingBox;
+            let x, y, w, h;
+            if (bbox.xCenter !== undefined) {
+                w = bbox.width  * img.width;
+                h = bbox.height * img.height;
+                x = bbox.xCenter * img.width - w / 2;
+                y = bbox.yCenter * img.height - h / 2;
+            } else {
+                x = bbox.xMin  * img.width;
+                y = bbox.yMin  * img.height;
+                w = bbox.width * img.width;
+                h = bbox.height* img.height;
+            }
+
+            const cropW = w * 1.5;
+            const cropH = h * 1.8;
+            const cropX = x + w / 2 - cropW / 2;
+            const cropY = y + h * 0.4 - cropH * 0.51;
+
+            const v9Canvas = document.createElement('canvas');
+            v9Canvas.width = 224;
+            v9Canvas.height = 224;
+            const v9Ctx = v9Canvas.getContext('2d');
+            
+            v9Ctx.fillStyle = 'black';
+            v9Ctx.fillRect(0, 0, 224, 224);
+
+            const sX = Math.max(0, cropX);
+            const sY = Math.max(0, cropY);
+            const sW = Math.min(img.width - sX, cropX + cropW - sX);
+            const sH = Math.min(img.height - sY, cropY + cropH - sY);
+
+            if (sW > 0 && sH > 0) {
+                const dX = (sX - cropX) * (224 / cropW);
+                const dY = (sY - cropY) * (224 / cropH);
+                const dW = sW * (224 / cropW);
+                const dH = sH * (224 / cropH);
+                v9Ctx.drawImage(img, sX, sY, sW, sH, dX, dY, dW, dH);
+            }
+
+            // Step 1: Run V9
+            const feedsV9 = {};
+            feedsV9[ortSessionV9.inputNames[0]] = getTensorFromCanvasV9(v9Canvas);
+            const outV9 = await ortSessionV9.run(feedsV9);
+            
+            let classKey = ortSessionV9.outputNames.find(n => n.includes('class')) || ortSessionV9.outputNames[0];
+            let landmarkKey = ortSessionV9.outputNames.find(n => n.includes('landmark')) || ortSessionV9.outputNames[2] || ortSessionV9.outputNames[1];
+            
+            const scoreRaw = outV9[classKey].data[0];
+            const score = 1.0 / (1.0 + Math.exp(-scoreRaw));
+            const landmarks = outV9[landmarkKey].data;
+
+            if (score <= 0.40) {
+                refStatusEl.textContent = '⚠️ Low landmark confidence: ' + score.toFixed(2);
+                refStatusEl.className = 'status-badge error';
+                return;
+            }
+
+            // Step 2: Align crop using landmarks
+            const lmAbs = [];
+            for (let i = 0; i < 5; i++) {
+                const lx = landmarks[i * 2] * cropW + cropX;
+                const ly = landmarks[i * 2 + 1] * cropH + cropY;
+                lmAbs.push(lx, ly);
+            }
+
+            const xs = [lmAbs[0], lmAbs[2], lmAbs[4], lmAbs[6], lmAbs[8]];
+            const ys = [lmAbs[1], lmAbs[3], lmAbs[5], lmAbs[7], lmAbs[9]];
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            const centerX = xs.reduce((a, b) => a + b, 0) / 5.0;
+            const centerY = ys.reduce((a, b) => a + b, 0) / 5.0;
+
+            const faceW = maxX - minX;
+            const faceH = maxY - minY;
+            const side = Math.max(faceW * 2.4, faceH * 2.0, 64);
+            const recogCropX = centerX - side / 2;
+            const recogCropY = centerY - side * 0.45;
+
+            // Draw to refCropCanvas
+            refCropCtx.fillStyle = 'black';
+            refCropCtx.fillRect(0, 0, 112, 112);
+
+            const rSrcX = Math.max(0, recogCropX);
+            const rSrcY = Math.max(0, recogCropY);
+            const rSrcW = Math.min(img.width - rSrcX, recogCropX + side - rSrcX);
+            const rSrcH = Math.min(img.height - rSrcY, recogCropY + side - rSrcY);
+
+            if (rSrcW > 0 && rSrcH > 0) {
+                const rDstX = (rSrcX - recogCropX) * (112 / side);
+                const rDstY = (rSrcY - recogCropY) * (112 / side);
+                const rDstW = rSrcW * (112 / side);
+                const rDstH = rSrcH * (112 / side);
+                refCropCtx.drawImage(img, rSrcX, rSrcY, rSrcW, rSrcH, rDstX, rDstY, rDstW, rDstH);
+            }
+
+            // Step 3: Run P3
+            const feedsP3 = {};
+            feedsP3[ortSessionP3.inputNames[0]] = getTensorFromCanvasP3(refCropCanvas);
+            const outP3 = await ortSessionP3.run(feedsP3);
+            const outKeyP3 = ortSessionP3.outputNames[0];
+            const vec = outP3[outKeyP3].data;
+
+            refEncrypted = await aesEncrypt(vec);
+            refIvEl.value = toHex(refEncrypted.iv);
+            refCtEl.value = toBase64(refEncrypted.ct);
+            refStatusEl.textContent = '✅ Encrypted';
+            refStatusEl.className = 'status-badge success';
+
+            await decryptAndMatch();
+
+        } catch(err) {
+            refStatusEl.textContent = 'Error: ' + err.message;
+            refStatusEl.className = 'status-badge error';
+            console.error('[Stream 2 Error]:', err);
+        } finally {
+            camPaused = false;
+        }
+    };
+    img.src = URL.createObjectURL(file);
+});
+
+// ════════════════════════════════════════════════
+//  Camera Activation
+// ════════════════════════════════════════════════
+const camera = new Camera(videoElement, {
+    onFrame: async () => {
+        if (!camPaused) await faceDetectionCam.send({ image: videoElement });
+    },
+    width: 640, height: 480
+});
+
+// ════════════════════════════════════════════════
+//  WASM Model Benchmark Panel
+// ════════════════════════════════════════════════
+benchmarkBtn.addEventListener('click', async () => {
+    benchmarkBtn.disabled = true;
+    benchmarkTable.style.display = 'table';
+    benchmarkTbody.innerHTML = '';
+    
+    const runs = 50;
+    const modelsToBench = [
+        { name: 'SFace (FP32)', session: ortSessionSFaceFP32, shape: [1, 3, 112, 112] },
+        { name: 'SFace (INT8)', session: ortSessionSFaceINT8, shape: [1, 3, 112, 112] },
+        { name: 'V9 Landmarks', session: ortSessionV9, shape: [1, 3, 224, 224] },
+        { name: 'ArcFace P3', session: ortSessionP3, shape: [1, 3, 112, 112] }
+    ];
+
+    for (let m of modelsToBench) {
+        if (!m.session) {
+            benchmarkStatus.textContent = `Error: ${m.name} session not loaded.`;
+            continue;
+        }
+
+        benchmarkStatus.textContent = `Benchmarking ${m.name}...`;
+        
+        // Generate dummy input data
+        const size = m.shape[0] * m.shape[1] * m.shape[2] * m.shape[3];
+        const data = new Float32Array(size);
+        for (let i = 0; i < size; i++) data[i] = Math.random();
+        const inputTensor = new ort.Tensor('float32', data, m.shape);
+
+        const inputName = m.session.inputNames[0];
+        const feeds = {};
+        feeds[inputName] = inputTensor;
+
+        // Warmup
+        for (let i = 0; i < 5; i++) {
+            await m.session.run(feeds);
+        }
+
+        // Benchmark runs
+        const latencies = [];
+        for (let i = 0; i < runs; i++) {
+            const t0 = performance.now();
+            await m.session.run(feeds);
+            latencies.push(performance.now() - t0);
+        }
+
+        const avg = latencies.reduce((a, b) => a + b, 0) / runs;
+        const fps = 1000.0 / avg;
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); font-weight: 600; color: #93c5fd;">${m.name}</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: center; font-family: monospace; color: var(--text-muted);">[${m.shape.join(', ')}]</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: right; font-weight: bold; color: var(--accent-primary);">${avg.toFixed(2)} ms</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: right; font-weight: bold; color: var(--accent-success);">${fps.toFixed(1)}</td>
+        `;
+        benchmarkTbody.appendChild(row);
+    }
+    
+    benchmarkStatus.textContent = '✅ WASM Benchmark Completed!';
+    benchmarkBtn.disabled = false;
+});
+
+// ════════════════════════════════════════════════
+//  Boot Application
+// ════════════════════════════════════════════════
+(async () => {
+    await generateAESKey();
+    await initONNX();
+    camera.start();
+})();
+</script>
+</body>
+</html>

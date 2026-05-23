@@ -1,87 +1,103 @@
+"""
+benchmark_models.py - Benchmark SFace (FP32/INT8) vs V9 (Landmark) vs P3 (ArcFace) ONNX models.
+"""
+import os
 import time
 import numpy as np
 import onnxruntime as ort
-import os
 
-# --- Dummy L1Dist layer for Siamese ---
-try:
-    import tensorflow as tf
-    class L1Dist(tf.keras.layers.Layer):
-        def __init__(self, **kwargs):
-            super().__init__()
-        def call(self, inputs):
-            input_embedding, validation_embedding = inputs
-            return tf.math.abs(input_embedding - validation_embedding)
-except ImportError:
-    pass
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS = {
+    "SFace (FP32)": os.path.join(SCRIPT_DIR, "models", "face_recognition_sface_2021dec.onnx"),
+    "SFace (INT8)": os.path.join(SCRIPT_DIR, "models", "face_recognition_sface_2021dec_int8.onnx"),
+    "V9 Landmarks": os.path.join(SCRIPT_DIR, "models", "face_detect_v9.onnx"),
+    "ArcFace P3": os.path.join(SCRIPT_DIR, "models", "face_recognize_arcface_p3.onnx"),
+}
 
-def benchmark_keras_model(model_path, input_shape, is_siamese=False):
-    print(f"\n[Keras] Loading {os.path.basename(model_path)}...")
-    try:
-        if is_siamese:
-            model = tf.keras.models.load_model(model_path, custom_objects={'L1Dist': L1Dist})
-            dummy_input = [np.random.rand(*input_shape).astype(np.float32), np.random.rand(*input_shape).astype(np.float32)]
-        else:
-            model = tf.keras.models.load_model(model_path)
-            dummy_input = np.random.rand(*input_shape).astype(np.float32)
-        
-        # Warm-up
-        for _ in range(5):
-            model.predict(dummy_input, verbose=0)
-        
-        print("Running benchmark (100 iterations)...")
-        start_time = time.time()
-        for _ in range(100):
-            model.predict(dummy_input, verbose=0)
-        end_time = time.time()
-        
-        avg_time = (end_time - start_time) / 100
-        fps = 1.0 / avg_time
-        print(f"--> Average Time: {avg_time*1000:.2f} ms")
-        print(f"--> FPS: {fps:.2f}")
-    except Exception as e:
-        print(f"Failed to benchmark {os.path.basename(model_path)}: {e}")
+WARMUP_RUNS = 10
+BENCHMARK_RUNS = 100
 
-def benchmark_onnx_model(model_path, input_shape):
-    print(f"\n[ONNX] Loading {os.path.basename(model_path)}...")
-    try:
-        session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
-        input_name = session.get_inputs()[0].name
-        dummy_input = np.random.rand(*input_shape).astype(np.float32)
-        
-        # Warm-up
-        for _ in range(5):
-            session.run(None, {input_name: dummy_input})
-            
-        print("Running benchmark (100 iterations)...")
-        start_time = time.time()
-        for _ in range(100):
-            session.run(None, {input_name: dummy_input})
-        end_time = time.time()
-        
-        avg_time = (end_time - start_time) / 100
-        fps = 1.0 / avg_time
-        print(f"--> Average Time: {avg_time*1000:.2f} ms")
-        print(f"--> FPS: {fps:.2f}")
-    except Exception as e:
-        print(f"Failed to benchmark {os.path.basename(model_path)}: {e}")
+def get_input_shape_and_type(session):
+    input_meta = session.get_inputs()[0]
+    return input_meta.shape, input_meta.type
+
+def benchmark_model(name, path):
+    if not os.path.exists(path):
+        print(f"[-] {name} not found at {path}. Skipping.")
+        return None
+
+    # Load session (CPU execution provider)
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 4
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(path, opts, providers=['CPUExecutionProvider'])
+
+    shape, dtype = get_input_shape_and_type(session)
+    input_name = session.get_inputs()[0].name
+    output_names = [o.name for o in session.get_outputs()]
+
+    # Replace dynamic batch size with 1
+    run_shape = [1 if isinstance(s, str) or s is None or s < 0 else s for s in shape]
+    
+    print(f"\n[*] Benchmarking {name}...")
+    print(f"    Path: {path}")
+    print(f"    Input: {input_name} {run_shape} ({dtype})")
+    print(f"    Outputs: {', '.join(output_names)}")
+
+    # Generate dummy input data
+    if "float" in dtype:
+        dummy_input = np.random.randn(*run_shape).astype(np.float32)
+    elif "int8" in dtype:
+        dummy_input = np.random.randint(-128, 127, size=run_shape, dtype=np.int8)
+    else:
+        dummy_input = np.random.randn(*run_shape).astype(np.float32)
+
+    # Warmup
+    for _ in range(WARMUP_RUNS):
+        session.run(output_names, {input_name: dummy_input})
+
+    # Benchmark loop
+    latencies = []
+    for _ in range(BENCHMARK_RUNS):
+        t0 = time.perf_counter()
+        session.run(output_names, {input_name: dummy_input})
+        latencies.append((time.perf_counter() - t0) * 1000.0) # convert to ms
+
+    latencies = np.array(latencies)
+    avg_latency = np.mean(latencies)
+    min_latency = np.min(latencies)
+    max_latency = np.max(latencies)
+    std_latency = np.std(latencies)
+    fps = 1000.0 / avg_latency
+
+    return {
+        "name": name,
+        "avg": avg_latency,
+        "min": min_latency,
+        "max": max_latency,
+        "std": std_latency,
+        "fps": fps,
+        "input_shape": f"{run_shape}",
+    }
+
+def main():
+    print("=" * 70)
+    print("           ONNX MODEL PERFORMANCE BENCHMARK (PYTHON/CPU)")
+    print("=" * 70)
+    
+    results = []
+    for name, path in MODELS.items():
+        res = benchmark_model(name, path)
+        if res:
+            results.append(res)
+
+    print("\n" + "=" * 78)
+    print(f"{'Model Name':<18} | {'Input Shape':<15} | {'Avg (ms)':>10} | {'Min (ms)':>10} | {'Max (ms)':>10} | {'FPS':>8}")
+    print("-" * 78)
+    for r in results:
+        print(f"{r['name']:<18} | {r['input_shape']:<15} | {r['avg']:10.2f} | {r['min']:10.2f} | {r['max']:10.2f} | {r['fps']:8.1f}")
+    print("=" * 78)
+    print(f"Warmup runs: {WARMUP_RUNS} | Benchmark runs: {BENCHMARK_RUNS}")
 
 if __name__ == "__main__":
-    print("="*50)
-    print(" STAGE 1: FACE DETECTION BENCHMARK")
-    print("="*50)
-    # Keras FaceTracker
-    benchmark_keras_model("C:/Users/phanc/Downloads/test_model/test_model/facetracker.keras", (1, 120, 120, 3))
-    # YOLOv8 ONNX
-    benchmark_onnx_model("d:/AIoT_DoAn/models/exports/face_detect_v9.onnx", (1, 3, 320, 320))
-    
-    print("\n" + "="*50)
-    print(" STAGE 2: FACE RECOGNITION BENCHMARK")
-    print("="*50)
-    # Siamese Keras
-    # Shape for Nicholas Renotte tutorial is usually 100x100 or 105x105, let's try 100x100 and then 105x105 if it fails.
-    benchmark_keras_model("C:/Users/phanc/Downloads/Face_Regconition/Face_Regconition/siamesemodel.keras", (1, 100, 100, 3), is_siamese=True)
-    # ArcFace ONNX
-    benchmark_onnx_model("d:/AIoT_DoAn/models/exports/face_recognize_arcface_p3.onnx", (1, 3, 112, 112))
-    
-    print("\nBenchmark completed!")
+    main()

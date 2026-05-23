@@ -1,0 +1,417 @@
+# Kế Hoạch Phát Triển Hệ Thống Tra Cứu Thông Tin Chuyến Bay Qua Nhận Diện Khuôn Mặt
+
+> **Đồ án AIoT** — Tích hợp AI thị giác trên phần cứng biên RISC-V  
+> Cập nhật: 2026-05-23
+
+---
+
+## 1. Tổng Quan Hệ Thống
+
+### 1.1 Mục tiêu
+Xây dựng hệ thống cho phép hành khách **tra cứu thông tin chuyến bay** (cổng ra, thời gian boarding, trạng thái) bằng cách **nhìn vào camera** tại sảnh sân bay — thay vì xuất trình vé giấy hoặc mở ứng dụng.
+
+### 1.2 Ba khối chính
+
+```mermaid
+graph LR
+    subgraph "Khối 1: Web Client"
+        W1[Đặt vé máy bay] --> W2[Đăng ký khuôn mặt]
+        W2 --> W3["ONNX Inference (Browser WASM)"]
+        W3 --> W4["AES-GCM Encrypt Vector 128D"]
+    end
+
+    subgraph "Khối 2: Server"
+        S1["Vector DB (Encrypted)"]
+        S2[Flight Info Database]
+        S3[REST/gRPC API]
+        S1 --- S3
+        S2 --- S3
+    end
+
+    subgraph "Khối 3: Edge Device"
+        E1["Camera RISC-V C906"]
+        E2["YOLO → V9 → P3 Pipeline"]
+        E3[Local Cache]
+        E4[LCD / Audio Output]
+    end
+
+    W4 -->|HTTPS| S3
+    S3 -->|Sync encrypted vectors| E3
+    E1 --> E2
+    E2 -->|Query cache or API| S3
+    E2 --> E4
+```
+
+### 1.3 Phần cứng Edge (MaixCAM / Sipeed)
+
+| Thông số | Giá trị |
+|:---|:---|
+| CPU | RISC-V C906 @ 1GHz |
+| RAM | 128MB DDR3 |
+| Storage | MicroSD 8GB |
+| Kết nối | USB 2.0, UART, SPI, I2C, GPIO, WiFi |
+| AI | TPU tích hợp (INT8 inference) |
+| Camera | FPC connector (GC4653 sensor) |
+| Audio | Microphone tích hợp |
+
+---
+
+## 2. Kiến Trúc Chi Tiết
+
+### 2.1 Khối Web — Đặt vé & Đăng ký khuôn mặt
+
+#### Luồng người dùng
+1. Hành khách **đặt vé máy bay** bình thường (chọn chuyến, thanh toán).
+2. Sau khi đặt vé thành công → hiện màn hình **"Đăng ký Face Check-in"**.
+3. Hướng dẫn trên màn hình: quay video 5 giây, xoay đầu trái-phải-lên-xuống trong điều kiện sáng đủ.
+4. Trình duyệt chạy pipeline ONNX cục bộ (WASM):
+   - **MediaPipe** phát hiện bounding box khuôn mặt.
+   - **V9 Landmarks** (224×224) → 5 điểm mốc.
+   - Căn chỉnh & crop 112×112 → **ArcFace P3** → vector embedding 128D.
+5. Trích xuất **7 khung hình tốt nhất** (score > 0.4, đa góc), tính trung bình vector → L2 normalize.
+6. **Mã hóa AES-GCM 256-bit** vector trung bình → gửi lên server kèm `booking_id`.
+
+#### Xử lý chất lượng đăng ký
+- Kiểm tra **độ sáng trung bình** ảnh (luminance > 80, < 220).
+- Kiểm tra **góc xoay đa dạng** qua phân bố landmark: yêu cầu ít nhất 3 góc khác biệt.
+- Kiểm tra **face score từ V9 > 0.5** cho mỗi khung được chọn.
+- Nếu chất lượng không đạt → hiển thị hướng dẫn cụ thể để người dùng thử lại.
+
+#### Công nghệ
+| Layer | Công nghệ |
+|:---|:---|
+| Frontend | HTML/CSS/JS hoặc Next.js |
+| Face Detection | MediaPipe Face Detection (CDN) |
+| Landmark + Embedding | `onnxruntime-web` (WASM) — V9 + P3 |
+| Mã hóa | Web Crypto API — AES-GCM 256-bit |
+| Giao tiếp | HTTPS REST → Server |
+
+---
+
+### 2.2 Khối Server — Lưu trữ & Đối sánh
+
+#### Chức năng
+1. **Nhận và lưu** vector mã hóa + thông tin vé từ Web Client.
+2. **Đồng bộ cache** xuống thiết bị Edge theo chuyến bay (chỉ gửi vector của hành khách cùng chuyến).
+3. **Fallback matching**: nếu Edge không match được local → gọi API server để tìm kiếm mở rộng.
+
+#### Kiến trúc cơ sở dữ liệu — Tách biệt trách nhiệm
+
+> **Nguyên tắc**: SQL chỉ lưu *metadata có cấu trúc*, Vector DB lưu *embedding để search*. Không trộn lẫn.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  RELATIONAL DB — SQLite (prototype) / PostgreSQL (production)   │
+│  Lưu metadata cấu trúc — KHÔNG lưu vector                      │
+│                                                                 │
+│  ┌─────────────┐   ┌──────────────────────┐   ┌─────────────┐  │
+│  │ passengers  │   │ bookings             │   │ flights     │  │
+│  │─────────────│   │──────────────────────│   │─────────────│  │
+│  │ id (PK)     │──▶│ id (PK)              │◀──│ id (PK)     │  │
+│  │ name        │   │ passenger_id (FK)    │   │ flight_code │  │
+│  │ email       │   │ flight_id (FK)       │   │ departure   │  │
+│  │ phone       │   │ seat_number          │   │ gate        │  │
+│  └─────────────┘   │ qdrant_point_id ─────┼─┐ │ destination │  │
+│                    │ face_registered_at   │ │ │ status      │  │
+│                    │ status               │ │ └─────────────┘  │
+│                    └──────────────────────┘ │                  │
+└─────────────────────────────────────────────┼──────────────────┘
+                                              │ foreign key
+┌─────────────────────────────────────────────┼──────────────────┐
+│  VECTOR DB — Qdrant (self-hosted Docker)    │                  │
+│  Collection: "face_embeddings"              ▼                  │
+│                                                                 │
+│  Point {                                                        │
+│    id      : UUID  ← liên kết với bookings.qdrant_point_id     │
+│    vector  : float32[128]  ← embedding ArcFace P3 (plaintext)  │
+│    payload : {                                                  │
+│      booking_id  : "BK-001"                                     │
+│      flight_id   : "VN123"                                      │
+│      passenger   : "Nguyen Van A"                               │
+│      seat        : "12A"                                        │
+│      gate        : "B07"                                        │
+│      expires_at  : "2026-05-24T08:00:00Z"                       │
+│    }                                                            │
+│  }                                                              │
+│                                                                 │
+│  Index: HNSW (m=16, ef_construct=128)                           │
+│  → ANN search cosine < 1ms với hàng triệu vector               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Tại sao dùng Vector DB thay vì SQL thuần?
+
+| Tiêu chí | SQL + pgvector | **Qdrant (Vector DB)** |
+|:---|:---|:---|
+| Search 1M vector | ~100ms (scan tuần tự) | **< 1ms** (HNSW ANN index) |
+| Cosine similarity | Phải tính lại mỗi query | Native operator, pre-indexed |
+| Filter by flight_id | JOIN bảng, slow | Filter ngay trong vector search |
+| Sync xuống Edge | SQL dump phức tạp | REST API scroll → JSON đơn giản |
+| Xóa vector hết hạn | DELETE query | Payload filter + delete by TTL |
+| Scale ngang | Cần sharding thủ công | Built-in partition + replication |
+
+#### Luồng đăng ký vector (Web → Qdrant)
+```
+Browser: ONNX inference → vector 128D → AES-GCM encrypt → POST /api/face/register
+Server:  AES-GCM decrypt → upsert Qdrant point {vector, payload}
+         → lưu qdrant_point_id vào bookings table (SQL)
+```
+
+#### Luồng tìm kiếm (Edge → Qdrant)
+```
+Edge:   ArcFace P3 → vector 128D → POST /api/face/match
+Server: Qdrant.search(vector, filter={flight_id: X}, top_k=1, metric=cosine)
+        → score ≥ 0.955 (dist ≤ 0.045): Match → trả payload (tên, ghế, cổng)
+        → score < 0.955: No Match
+```
+
+#### API Endpoints
+
+| Method | Endpoint | Mô tả |
+|:---|:---|:---|
+| POST | `/api/bookings` | Tạo booking mới (SQL) |
+| POST | `/api/face/register` | Decrypt vector → upsert Qdrant + lưu point_id |
+| GET | `/api/flights/:code` | Lấy thông tin chuyến bay (SQL) |
+| POST | `/api/face/match` | Qdrant ANN search by flight_id → trả kết quả |
+| GET | `/api/sync/:flight_id` | Qdrant scroll by payload.flight_id → JSON cache |
+| PATCH | `/api/bookings/:id/checkin` | Cập nhật status SQL + Qdrant payload |
+
+#### Quy trình đối sánh trên Server
+1. Edge gửi vector 128D (plaintext qua HTTPS/TLS nội bộ).
+2. Gọi **Qdrant search**: `vector=emb, filter={flight_id: X}, top_k=1, with_payload=True`.
+3. Qdrant dùng **HNSW index** trả về điểm gần nhất + cosine score trong < 1ms.
+4. Ngưỡng: `score ≥ 0.955` (dist ≤ 0.045) → Match; `≥ 0.920` → Cần xác minh; `< 0.920` → Không khớp.
+
+#### Công nghệ
+| Layer | Công nghệ |
+|:---|:---|
+| Backend | Python FastAPI |
+| Relational DB | SQLite → PostgreSQL (metadata) |
+| **Vector DB** | **Qdrant** (self-hosted Docker / Qdrant Cloud) |
+| Qdrant Client | `qdrant-client` Python SDK |
+| Bảo mật | AES-GCM, HTTPS/TLS, API key auth |
+
+---
+
+### 2.3 Khối Edge — Thiết bị nhận diện tại sân bay
+
+#### Pipeline xử lý
+
+```mermaid
+graph TD
+    A["Camera GC4653 (320×320)"] --> B["YOLOv8n Face Detection"]
+    B -->|"Bounding Box (x,y,w,h)"| C["Adaptive Crop (178×218 CelebA ratio)"]
+    C -->|"Resize 224×224"| D["V9 Landmark Model (cvimodel)"]
+    D -->|"5 Landmarks + Score"| E{"Score > 0.4?"}
+    E -->|No| F[Bỏ qua / Hiển thị 'Vui lòng nhìn thẳng']
+    E -->|Yes| G["EMA Smoothing (α=0.35)"]
+    G -->|"Aligned Crop 112×112"| H["ArcFace P3 (cvimodel)"]
+    H -->|"Embedding 128D"| I["L2 Normalize"]
+    I --> J{"Local Cache Match?"}
+    J -->|"dist ≤ 0.045"| K["✅ Hiển thị thông tin chuyến bay"]
+    J -->|"No match"| L["Gọi Server API fallback"]
+    L -->|Match| K
+    L -->|No match| M["❌ Không tìm thấy booking"]
+```
+
+#### Chiến lược Cache thông minh
+- **Pre-sync**: Trước giờ bay 3 tiếng, Edge tải toàn bộ vector hành khách của các chuyến bay sắp khởi hành về local (qua WiFi).
+- **Cấu trúc cache**: File JSON trên MicroSD, nhóm theo `flight_id`.
+- **Dung lượng**: 128D × 4 bytes × 200 hành khách ≈ **100 KB/chuyến** → MicroSD 8GB dư sức chứa hàng nghìn chuyến.
+- **TTL**: Cache tự xóa sau khi chuyến bay cất cánh + 2 tiếng.
+- **Fallback**: Nếu không match trong cache → gọi REST API server để tìm kiếm mở rộng.
+
+#### Hiển thị kết quả
+- **LCD** (nếu có): Tên hành khách, số hiệu chuyến bay, cổng ra, thời gian boarding, ghế ngồi.
+- **Audio** (qua mic/speaker): Đọc thông tin bằng TTS đơn giản hoặc beep xác nhận.
+- **LED GPIO**: Xanh = match, Đỏ = không match, Vàng = đang xử lý.
+
+#### Giao tiếp Edge ↔ Server
+
+| Kênh | Giao thức | Mục đích |
+|:---|:---|:---|
+| WiFi | HTTPS REST | Sync cache, fallback match, heartbeat |
+| UART | Serial | Debug log, kết nối màn hình phụ |
+
+---
+
+## 3. Bảo Mật End-to-End
+
+```mermaid
+sequenceDiagram
+    participant Browser as Web Client
+    participant Server as Server
+    participant Edge as Edge Device
+
+    Browser->>Browser: ONNX inference → Vector 128D
+    Browser->>Browser: AES-GCM encrypt (session key)
+    Browser->>Server: POST /face/register {encrypted_vector, IV, booking_id}
+    Note over Server: Lưu encrypted vector + IV vào DB
+
+    Edge->>Server: GET /sync/flight_123 (authenticated)
+    Server->>Edge: {encrypted_vectors[], IVs[], booking_infos[]}
+    Note over Edge: Giải mã bằng device key, lưu cache
+
+    Edge->>Edge: Camera → Pipeline → Vector 128D
+    Edge->>Edge: Cosine match với cache (plaintext trên RAM)
+    Edge->>Edge: Hiển thị kết quả
+
+    alt Cache miss
+        Edge->>Server: POST /face/match {encrypted_vector}
+        Server->>Server: Giải mã + brute-force match
+        Server->>Edge: {matched_booking}
+    end
+```
+
+### Quản lý khóa mã hóa
+| Khóa | Vị trí | Mục đích |
+|:---|:---|:---|
+| Session Key (AES-256) | Browser (Web Crypto) | Mã hóa vector trước khi gửi server |
+| Master Key (AES-256) | Server (env var) | Re-encrypt để lưu DB |
+| Device Key (AES-256) | Edge (secure storage) | Giải mã cache khi sync |
+
+### Nguyên tắc
+- Vector khuôn mặt **không bao giờ** truyền dạng plaintext qua mạng.
+- Server lưu trữ dạng mã hóa, chỉ giải mã trong RAM khi cần match.
+- Edge giải mã cache vào RAM, không lưu plaintext xuống MicroSD.
+
+---
+
+## 4. Mô Hình AI — Đã Hoàn Thành
+
+| Mô hình | Input | Output | Kích thước ONNX | Latency (CPU Python) |
+|:---|:---|:---|:---|:---|
+| YOLOv8n Face | 320×320 RGB | Bounding boxes | 3.3 MB (.cvimodel) | ~15 ms |
+| V9 Landmarks | 224×224 RGB (÷255) | class(1) + bbox(4) + lm(10) | 10.2 MB | **2.70 ms** |
+| ArcFace P3 | 112×112 RGB ([-1,1]) | Embedding 128D | 11.8 MB | **6.39 ms** |
+
+### Đã triển khai
+- ✅ Train V9 trên CelebA (90 epochs, Wing+Focal loss, Label Smoothing)
+- ✅ Train ArcFace P3 trên CASIA-WebFace (60 epochs, SGD+CosineAnnealing, ArcMargin s=64 m=0.50)
+- ✅ Export ONNX → cvimodel (MaixHub TPU compiler)
+- ✅ Deploy trên MaixCAM: `MaixCAM_App/main.py`
+- ✅ Benchmark Python CPU + Browser WASM
+
+---
+
+## 5. Kế Hoạch Phát Triển Theo Giai Đoạn
+
+### Giai đoạn 1: Prototype Core (2 tuần)
+
+| # | Task | Output | Trạng thái |
+|:--|:---|:---|:---|
+| 1.1 | Train & export V9 + ArcFace P3 | `.onnx`, `.cvimodel` | ✅ Xong |
+| 1.2 | Deploy pipeline trên MaixCAM | `MaixCAM_App/main.py` | ✅ Xong |
+| 1.3 | Web ONNX inference + AES-GCM | `index.html` | ✅ Xong |
+| 1.4 | Benchmark so sánh 4 model | `benchmark_models.py`, WASM panel | ✅ Xong |
+
+### Giai đoạn 2: Server Backend (2 tuần)
+
+| # | Task | Output |
+|:--|:---|:---|
+| 2.1 | Khởi tạo FastAPI + SQLite schema (passengers, flights, bookings) | `server/` directory |
+| 2.2 | Setup **Qdrant** Docker, tạo collection `face_embeddings` (HNSW, cosine) | `docker-compose.yml` |
+| 2.3 | API: CRUD bookings + flights (SQL) | REST endpoints |
+| 2.4 | API: Face register → AES-GCM decrypt → upsert Qdrant | `/api/face/register` |
+| 2.5 | API: Face match → Qdrant ANN search by flight_id | `/api/face/match` |
+| 2.6 | API: Sync cache → Qdrant scroll by payload → JSON response | `/api/sync/:flight_id` |
+
+### Giai đoạn 3: Web Frontend Đặt Vé (2 tuần)
+
+| # | Task | Output |
+|:--|:---|:---|
+| 3.1 | UI đặt vé: chọn chuyến, điền thông tin, thanh toán mock | Trang booking |
+| 3.2 | UI đăng ký khuôn mặt: video 5s + hướng dẫn xoay đầu | Trang face register |
+| 3.3 | Logic multi-frame: chọn 7 khung tốt nhất, trung bình vector | JS pipeline |
+| 3.4 | Kiểm tra chất lượng: ánh sáng, góc, score | Quality gate |
+| 3.5 | Encrypt + gửi lên server | Integration test |
+
+### Giai đoạn 4: Edge Integration (2 tuần)
+
+| # | Task | Output |
+|:--|:---|:---|
+| 4.1 | WiFi connection trên MaixCAM | Network setup script |
+| 4.2 | HTTP client: sync cache từ server | `sync_cache.py` |
+| 4.3 | Local matching: cosine search trên cache | Update `main.py` |
+| 4.4 | Fallback: gọi server API khi cache miss | HTTP POST logic |
+| 4.5 | Hiển thị kết quả: LCD + LED + Audio | Display module |
+| 4.6 | Cache lifecycle: auto-sync, TTL, cleanup | Background task |
+
+### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần)
+
+| # | Task | Output |
+|:--|:---|:---|
+| 5.1 | End-to-end test: Web đăng ký → Server lưu → Edge nhận diện | Test report |
+| 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | Performance report |
+| 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | Security audit |
+| 5.4 | Demo video + poster đồ án | Deliverables |
+
+---
+
+## 6. Cấu Trúc Thư Mục Đề Xuất (Toàn Hệ Thống)
+
+```
+project-root/
+├── web/                          # Khối 1: Web Client
+│   ├── index.html                # Trang đặt vé + đăng ký khuôn mặt
+│   ├── models/                   # ONNX models cho browser
+│   │   ├── face_detect_v9.onnx
+│   │   └── face_recognize_arcface_p3.onnx
+│   └── js/
+│       ├── pipeline.js           # V9 + P3 inference pipeline
+│       ├── crypto.js             # AES-GCM encrypt/decrypt
+│       └── registration.js       # Multi-frame capture logic
+│
+├── server/                       # Khối 2: Server Backend
+│   ├── main.py                   # FastAPI entry point
+│   ├── models/                   # SQLAlchemy models
+│   ├── routes/                   # API routes
+│   │   ├── bookings.py
+│   │   ├── flights.py
+│   │   └── face.py               # Register + Match + Sync
+│   ├── services/
+│   │   ├── crypto_service.py     # AES-GCM operations
+│   │   └── vector_service.py     # Cosine similarity search
+│   └── database.py
+│
+├── edge/                         # Khối 3: MaixCAM App
+│   ├── main.py                   # Pipeline chính (đã có)
+│   ├── sync_cache.py             # Đồng bộ vector từ server
+│   ├── display.py                # LCD + Audio output
+│   └── models/                   # .mud + .cvimodel files
+│
+├── training/                     # Code training (đã hoàn thành)
+│   ├── train_v9.py
+│   ├── train_recognize.py
+│   └── evaluate_models.py
+│
+└── docs/                         # Tài liệu
+    ├── development_plan.md       # File này
+    ├── report.md                 # Báo cáo benchmark
+    └── benchmark-pipeline.md
+```
+
+---
+
+## 7. Rủi Ro & Giải Pháp
+
+| Rủi ro | Mức độ | Giải pháp |
+|:---|:---|:---|
+| RAM 128MB không đủ cho 3 model + cache | Cao | Load model tuần tự, cache lưu MicroSD chỉ đọc khi cần |
+| WiFi mất kết nối tại sân bay | Trung bình | Cache pre-sync 3h trước, hoạt động offline hoàn toàn |
+| Ánh sáng kém tại quầy check-in | Trung bình | Thêm đèn LED ring quanh camera, kiểm tra luminance |
+| Khuôn mặt đeo khẩu trang | Cao | V9 đã train với CelebA có occlusion, giảm ngưỡng xuống 0.06 |
+| Latency quá cao trên TPU | Thấp | Đã benchmark: V9=2.7ms + P3=6.4ms → tổng <15ms (đạt yêu cầu) |
+
+---
+
+## 8. Chỉ Số Đánh Giá Thành Công
+
+| Chỉ số | Mục tiêu |
+|:---|:---|
+| Độ chính xác nhận diện (LFW) | ≥ 95% |
+| Tỷ lệ False Positive | < 0.1% |
+| Thời gian nhận diện E2E (Edge) | < 500ms |
+| Thời gian đăng ký khuôn mặt (Web) | < 15 giây |
+| Số hành khách cache/chuyến | ≥ 200 |
+| Hoạt động offline sau sync | ✅ |
