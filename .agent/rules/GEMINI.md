@@ -4,8 +4,8 @@ trigger: always_on
 
 # GEMINI.md - Core Rules
 
-**0. 🚨 MCP GRAPCO (CRITICAL)**
-- **MANDATORY:** Use `mcp grapco` to read and understand the project architecture/context BEFORE making ANY codebase changes. Skip ONLY if the codebase is already fully understood.
+**0. 🚨 MCP CODEGRAPH (CRITICAL)**
+- **MANDATORY:** Use `mcp codegraph` to read and understand the project architecture/context BEFORE making ANY codebase changes. Skip ONLY if the codebase is already fully understood.
 
 **1. AGENTS, ROUTING & PROTOCOL**
 - **Load Flow:** Read P0(GEMINI.md) > P1(Agent.md) > P2(SKILL.md matching `skills:` frontmatter). Read > Understand > Apply. NEVER SKIP.
