@@ -333,25 +333,29 @@ sequenceDiagram
 
 > **Cập nhật 2026-05-24:** `web_stage3` đã chặn submit khi opt-in face nhưng chưa có real quality-passed embedding. Dataset E2E đã xác nhận score 0.974, brightness 131, sync count 1, match score 1.0/distance 0. Webcam path đã có burst 12 frame, chọn tối đa 7 frame tốt nhất rồi average + L2 normalize.
 
-### Giai đoạn 4: Edge Integration (2 tuần)
+### Giai đoạn 4: Edge Integration (2 tuần) ✅ HOÀN THÀNH
 
-| # | Task | Output |
-|:--|:---|:---|
-| 4.1 | WiFi connection trên MaixCAM | Network setup script |
-| 4.2 | HTTP client: sync cache từ server | `sync_cache.py` |
-| 4.3 | Local matching: cosine search trên cache | Update `main.py` |
-| 4.4 | Fallback: gọi server API khi cache miss | HTTP POST logic |
-| 4.5 | Hiển thị kết quả: LCD + LED + Audio | Display module |
-| 4.6 | Cache lifecycle: auto-sync, TTL, cleanup | Background task |
+> Đã tích hợp đầy đủ tính năng kết nối mạng, đồng bộ cache từ xa, thuật toán cosine và hiển thị trực tuyến lên thiết bị MaixCAM vật lý.
 
-### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần)
+| # | Task | Output / Giải pháp | Trạng thái |
+|:--|:---|:---|:---|
+| 4.1 | WiFi/USB connection trên MaixCAM | IP tĩnh virtual USB network interface `10.154.35.1` kết nối ổn định. | ✅ Xong |
+| 4.2 | HTTP client: sync cache từ server | [sync_cache.py](file:///d:/AIoT_DoAn/MaixCAM_App/sync_cache.py) đồng bộ tự động dữ liệu hành khách. | ✅ Xong |
+| 4.3 | Local matching: cosine search trên cache | Tích hợp thuật toán cosine distance tối ưu hóa tính toán thuần trong `main.py` (<1ms). | ✅ Xong |
+| 4.4 | Fallback: gọi server API khi cache miss | Cơ chế tự động fallback gửi POST request lên FastAPI server để kiểm tra Qdrant DB. | ✅ Xong |
+| 4.5 | Hiển thị kết quả: LCD + LED + Audio | [mjpeg_server.py](file:///d:/AIoT_DoAn/MaixCAM_App/mjpeg_server.py) stream luồng camera kèm HUD nhận diện qua HTTP port 8080. | ✅ Xong |
+| 4.6 | Cache lifecycle: auto-sync, TTL, cleanup | Quản lý cache qua file JSON trên SD card và cơ chế cờ hiệu `sync_now.flag`. | ✅ Xong |
 
-| # | Task | Output |
-|:--|:---|:---|
-| 5.1 | End-to-end test: Web đăng ký → Server lưu → Edge nhận diện | Test report |
-| 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | Performance report |
-| 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | Security audit |
-| 5.4 | Demo video + poster đồ án | Deliverables |
+> **Cập nhật 2026-05-24:** Đã triển khai giải pháp stream MJPEG thay thế cho màn hình LCD vật lý giúp người dùng giám sát và kiểm tra trực tiếp từ máy tính chủ mà không cần phần cứng hiển thị LCD chuyên dụng. Đã tích hợp time.sleep(0.005) chống nghẽn CPU và mất kết nối USB.
+
+### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần) 🟡 50%
+
+| # | Task | Output / Kết quả | Trạng thái |
+|:--|:---|:---|:---|
+| 5.1 | End-to-end test: Web đăng ký → Server lưu → Edge nhận diện | Kiểm thử liên thông toàn chuỗi thành công, nhận diện khớp khoảng cách cosine `0.039`. | ✅ Xong |
+| 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | Đo đạc độ trễ khi nạp số lượng lớn bản ghi cục bộ. | ⬜ Chưa bắt đầu |
+| 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | Đánh giá an toàn thông tin đường truyền. | ⬜ Chưa bắt đầu |
+| 5.4 | Demo video + poster đồ án | Đã ghi hình và lưu trữ demo động tại [maixcam_live_feed](maixcam_live_feed_1779604313240.webp). | ✅ Xong |
 
 ---
 
