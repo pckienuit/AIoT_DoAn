@@ -9,6 +9,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 <body>
   <main class="shell">
@@ -68,12 +71,44 @@
         <div class="option-card">
           <div>
             <strong>Register face after booking</strong>
-            <span>Optional. Nếu bật, web sẽ tạo test embedding 128D và gọi `/api/face/register`.</span>
+            <span>Nếu bật, chọn upload ảnh / webcam / dataset để tạo embedding thật bằng V9 + ArcFace P3.</span>
           </div>
           <label class="switch" aria-label="Toggle face registration">
             <input id="registerFace" type="checkbox" checked />
             <span></span>
           </label>
+        </div>
+
+        <div class="face-source" aria-label="Face source selector">
+          <div class="source-tabs" role="group" aria-label="Face source options">
+            <button class="source-tab is-active" id="sourceUploadBtn" type="button" data-source="upload">Upload</button>
+            <button class="source-tab" id="sourceCameraBtn" type="button" data-source="camera">Webcam</button>
+            <button class="source-tab" id="sourceDatasetBtn" type="button" data-source="dataset">Dataset</button>
+          </div>
+          <div class="source-grid">
+            <label class="source-control" id="uploadControl">Upload face image
+              <input id="faceFileInput" type="file" accept="image/*" />
+            </label>
+            <div class="source-control is-hidden" id="cameraControl">
+              <span>Webcam capture</span>
+              <button id="startCameraBtn" class="button button--ghost" type="button">Start webcam</button>
+              <button id="captureCameraBtn" class="button button--ghost" type="button" disabled>Capture frame</button>
+            </div>
+            <div class="source-control is-hidden" id="datasetControl">
+              <span>Dataset sample</span>
+              <button id="loadDatasetBtn" class="button button--ghost" type="button">Load sample image</button>
+            </div>
+            <div class="face-preview">
+              <video id="cameraVideo" playsinline muted></video>
+              <canvas id="facePreviewCanvas" width="224" height="224"></canvas>
+            </div>
+          </div>
+          <div id="embeddingStatus" class="status-line">Models not loaded yet.</div>
+        </div>
+
+        <div id="submitReadiness" class="submit-readiness submit-readiness--fallback" role="status" aria-live="polite">
+          <strong id="readinessTitle">Fallback vector mode</strong>
+          <span id="readinessDetail">Face registration is ON, but no real embedding is selected yet.</span>
         </div>
 
         <div class="actions">
@@ -107,6 +142,10 @@
           <div class="metric">
             <span>Sync count</span>
             <strong id="syncText">0</strong>
+          </div>
+          <div class="metric">
+            <span>Submit mode</span>
+            <strong id="submitModeText">Fallback vector</strong>
           </div>
         </div>
 
