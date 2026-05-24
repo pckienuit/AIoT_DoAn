@@ -11,6 +11,8 @@ import json
 import math
 import os
 import time
+import base64
+import struct
 
 # urequests is the MaixCAM/MicroPython-style HTTP client.
 # On CPython it falls back to urllib.request.
@@ -69,7 +71,7 @@ def _http_post(url: str, body: dict, timeout: int) -> dict | None:
 
 
 # =====================================================================
-# MATH (no numpy — MaixCAM constraint)
+# MATH & CRYPTOGRAPHY (no numpy — MaixCAM constraint)
 # =====================================================================
 
 def _l2_normalize(vec: list) -> list:
@@ -85,6 +87,63 @@ def _cosine_distance(a: list, b: list) -> float:
     for i in range(n):
         dot += a[i] * b[i]
     return 1.0 - dot
+
+
+def _xtea_encrypt_block(key: tuple[int, int, int, int], block: tuple[int, int]) -> tuple[int, int]:
+    y, z = block
+    sum_val = 0
+    delta = 0x9E3779B9
+    mask = 0xFFFFFFFF
+    for _ in range(32):
+        y = (y + (((z << 4 ^ z >> 5) + z) ^ (sum_val + key[sum_val & 3]))) & mask
+        sum_val = (sum_val + delta) & mask
+        z = (z + (((y << 4 ^ y >> 5) + y) ^ (sum_val + key[(sum_val >> 11) & 3]))) & mask
+    return y, z
+
+
+def _xtea_crypt_ctr(key_bytes: bytes, nonce_bytes: bytes, data_bytes: bytes) -> bytes:
+    key = struct.unpack(">4I", key_bytes)
+    nonce = struct.unpack(">2I", nonce_bytes)
+    
+    out = bytearray()
+    num_blocks = (len(data_bytes) + 7) // 8
+    
+    for i in range(num_blocks):
+        ctr_block = (nonce[0], (nonce[1] + i) & 0xFFFFFFFF)
+        keystream_block = _xtea_encrypt_block(key, ctr_block)
+        keystream_bytes = struct.pack(">2I", *keystream_block)
+        
+        chunk = data_bytes[i*8 : (i+1)*8]
+        for b, k in zip(chunk, keystream_bytes):
+            out.append(b ^ k)
+            
+    return bytes(out)
+
+
+def _encrypt_xtea_vector(key_bytes: bytes, vector: list[float]) -> tuple[str | None, str | None]:
+    try:
+        data_bytes = struct.pack("<128f", *vector)
+        nonce_bytes = os.urandom(8)
+        encrypted_bytes = _xtea_crypt_ctr(key_bytes, nonce_bytes, data_bytes)
+        ciphertext_b64 = base64.b64encode(encrypted_bytes).decode("utf-8")
+        nonce_b64 = base64.b64encode(nonce_bytes).decode("utf-8")
+        return ciphertext_b64, nonce_b64
+    except Exception as e:
+        print("[encrypt] XTEA error:", e)
+        return None, None
+
+
+def _decrypt_xtea_vector(key_bytes: bytes, ciphertext_b64: str, nonce_b64: str) -> list[float] | None:
+    try:
+        ciphertext = base64.b64decode(ciphertext_b64)
+        nonce = base64.b64decode(nonce_b64)
+        decrypted_bytes = _xtea_crypt_ctr(key_bytes, nonce, ciphertext)
+        if len(decrypted_bytes) != 512:
+            return None
+        return list(struct.unpack("<128f", decrypted_bytes))
+    except Exception as e:
+        print("[decrypt] XTEA error:", e)
+        return None
 
 
 # =====================================================================
@@ -103,7 +162,8 @@ class CacheManager:
           "items": [
             {
               "point_id": "uuid",
-              "embedding": [128 floats],
+              "ciphertext": "base64",
+              "iv": "base64 (nonce)",
               "payload": { booking_id, passenger_name, gate, seat, ... }
             }, ...
           ]
@@ -116,6 +176,9 @@ class CacheManager:
         self.timeout = cfg["api_timeout_sec"]
         self.threshold = cfg["match_threshold"]
         self.fallback_enabled = cfg["fallback_enabled"]
+        # Device secret key (16 bytes)
+        raw_key = cfg.get("device_secret_key", "d3v1c3_s3cr3t_ke")
+        self.device_key = raw_key.encode("utf-8")[:16].ljust(16, b"\x00")
         self._ensure_cache_dir()
 
     # ------------------------------------------------------------------
@@ -137,13 +200,7 @@ class CacheManager:
         count = data.get("count", 0)
         items = data.get("items", [])
 
-        # Normalize embeddings on load
-        for item in items:
-            if "embedding" in item and item["embedding"]:
-                item["embedding"] = _l2_normalize(
-                    [float(v) for v in item["embedding"]]
-                )
-
+        # Note: items are stored encrypted on SD card. No normalization on sync.
         cache_entry = {
             "flight_id": flight_id,
             "synced_at": time.time(),
@@ -203,12 +260,18 @@ class CacheManager:
         if not self.fallback_enabled:
             return None
         url = "{}/api/face/match".format(self.server_url)
+        ciphertext, iv = _encrypt_xtea_vector(self.device_key, embedding)
+        if not ciphertext or not iv:
+            print("[fallback] Encryption failed for server match")
+            return None
+            
         body = {
             "flight_id": flight_id,
-            "embedding": [float(v) for v in embedding],
+            "ciphertext": ciphertext,
+            "iv": iv,
             "threshold": self.threshold,
         }
-        print("[fallback] Calling server match for flight", flight_id)
+        print("[fallback] Calling server match (encrypted) for flight", flight_id)
         data = _http_post(url, body, self.timeout)
         if data is None or not data.get("matched"):
             return None
@@ -291,12 +354,24 @@ class CacheManager:
         try:
             with open(path, "r") as f:
                 data = json.load(f)
-            # Normalize embeddings on read
+            
+            # Decrypt and normalize embeddings on read into memory
+            valid_items = []
             for item in data.get("items", []):
                 if "embedding" in item and item["embedding"]:
                     item["embedding"] = _l2_normalize(
                         [float(v) for v in item["embedding"]]
                     )
+                    valid_items.append(item)
+                elif "ciphertext" in item and "iv" in item:
+                    decrypted = _decrypt_xtea_vector(
+                        self.device_key, item["ciphertext"], item["iv"]
+                    )
+                    if decrypted is not None:
+                        item["embedding"] = _l2_normalize(decrypted)
+                        valid_items.append(item)
+                        
+            data["items"] = valid_items
             return data
         except Exception as e:
             print("[cache] Read failed:", e)

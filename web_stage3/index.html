@@ -20,7 +20,7 @@
       <div>
         <p class="eyebrow">AIoT Flight Face Lookup · Stage 3 Prototype</p>
         <h1 id="page-title">Web → FastAPI → Qdrant registration console</h1>
-        <p class="hero__copy">Tạo passenger, flight, booking và chọn có đăng ký face hay không. Prototype hiện gửi plaintext 128D embedding để kiểm thử luồng trước khi thêm mã hóa.</p>
+        <p class="hero__copy">Tạo passenger, flight, booking và chọn có đăng ký face hay không. Mã hóa AES-GCM-256 được tự động áp dụng khi truyền tải vector nhận diện khuôn mặt.</p>
       </div>
       <div class="health-panel" aria-label="Backend status">
         <button id="checkHealthBtn" class="button button--ghost" type="button">Check backend</button>
@@ -147,6 +147,10 @@
           <div class="metric">
             <span>Submit mode</span>
             <strong id="submitModeText">Fallback vector</strong>
+          </div>
+          <div class="metric">
+            <span>AES-GCM Key</span>
+            <code style="font-size: 0.75rem; word-break: break-all; color: var(--color-text-dim);">94c8e763a8a3a31e2474db62c82e0fb58cc2a77ef7cb73f1d8c117b4abdc3d9d</code>
           </div>
         </div>
 

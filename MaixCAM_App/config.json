@@ -1,10 +1,11 @@
 {
-  "server_url": "http://10.154.35.100:8000",
+  "server_url": "http://10.154.35.101:8000",
   "flight_ids": [12],
   "sync_interval_sec": 300,
   "cache_dir": "/root/cache",
   "match_threshold": 0.045,
   "api_timeout_sec": 5,
   "fallback_enabled": true,
-  "enable_lcd": false
+  "enable_lcd": false,
+  "device_secret_key": "d3v1c3_s3cr3t_ke"
 }

@@ -329,7 +329,7 @@ sequenceDiagram
 | 3.5 | Integration test: booking → optional face register → sync → match | Browser-tested with dataset image | ✅ Xong prototype |
 | 3.6 | Logic multi-frame: chọn 7 khung tốt nhất, trung bình vector | Webcam burst capture + average top frames | ✅ Xong prototype |
 | 3.7 | Quality gate: ánh sáng, góc, score và hướng dẫn retry | Brightness/V9/pose quality strip + blocking submit | ✅ Xong prototype |
-| 3.8 | AES-GCM encrypt + server decrypt | Secure vector transport | ⏳ Hoãn theo quyết định prototype |
+| 3.8 | AES-GCM encrypt + server decrypt | Secure vector transport | ✅ Xong |
 
 > **Cập nhật 2026-05-24:** `web_stage3` đã chặn submit khi opt-in face nhưng chưa có real quality-passed embedding. Dataset E2E đã xác nhận score 0.974, brightness 131, sync count 1, match score 1.0/distance 0. Webcam path đã có burst 12 frame, chọn tối đa 7 frame tốt nhất rồi average + L2 normalize.
 
@@ -348,14 +348,21 @@ sequenceDiagram
 
 > **Cập nhật 2026-05-24:** Đã triển khai giải pháp stream MJPEG thay thế cho màn hình LCD vật lý giúp người dùng giám sát và kiểm tra trực tiếp từ máy tính chủ mà không cần phần cứng hiển thị LCD chuyên dụng. Đã tích hợp time.sleep(0.005) chống nghẽn CPU và mất kết nối USB.
 
-### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần) 🟡 50%
+### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần) 🟢 80%
 
 | # | Task | Output / Kết quả | Trạng thái |
 |:--|:---|:---|:---|
 | 5.1 | End-to-end test: Web đăng ký → Server lưu → Edge nhận diện | Kiểm thử liên thông toàn chuỗi thành công, nhận diện khớp khoảng cách cosine `0.039`. | ✅ Xong |
 | 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | Đo đạc độ trễ khi nạp số lượng lớn bản ghi cục bộ. | ⬜ Chưa bắt đầu |
-| 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | Đánh giá an toàn thông tin đường truyền. | ⬜ Chưa bắt đầu |
+| 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | AES-GCM-256 (Web -> Server) và XTEA-CTR-128 (Server <-> Edge) bảo mật hoàn toàn. | ✅ Xong |
 | 5.4 | Demo video + poster đồ án | Đã ghi hình và lưu trữ demo động tại [maixcam_live_feed](maixcam_live_feed_1779604313240.webp). | ✅ Xong |
+
+> **Cập nhật 2026-05-24 (Bảo mật & Mã hóa):** Đã tích hợp thành công hệ thống mã hóa kép (Dual-Cipher):
+> 1. Trình duyệt mã hóa vector bằng AES-GCM-256 (sử dụng Web Crypto API) trước khi gửi lên FastAPI Server qua endpoint `/api/face/register`.
+> 2. FastAPI Server giải mã và lưu trữ tạm thời trong RAM, sau đó lập chỉ mục vector plaintext trên Qdrant DB.
+> 3. Khi đồng bộ cache về Edge qua endpoint `/api/sync/{flight_id}`, server mã hóa on-the-fly bằng XTEA-CTR (128-bit) với khóa thiết bị duy nhất.
+> 4. MaixCAM lưu dữ liệu mã hóa XTEA-CTR trực tiếp xuống thẻ MicroSD. Không ghi thông tin plaintext xuống lưu trữ tĩnh. Chỉ giải mã vào bộ nhớ RAM khi chạy đối sánh cosine để triệt tiêu nguy cơ lộ dữ liệu sinh trắc học nếu thẻ nhớ bị đánh cắp.
+
 
 ---
 

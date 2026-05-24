@@ -1,4 +1,41 @@
 const API_BASE = "http://127.0.0.1:8010";
+const AES_SECRET_HEX = "94c8e763a8a3a31e2474db62c82e0fb58cc2a77ef7cb73f1d8c117b4abdc3d9d";
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+async function getAESKey() {
+  const rawKey = hexToBytes(AES_SECRET_HEX);
+  return await crypto.subtle.importKey(
+    "raw",
+    rawKey,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptVectorAESGCM(floatArray) {
+  const f32 = new Float32Array(floatArray);
+  const aesKey = await getAESKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv },
+    aesKey,
+    f32.buffer
+  );
+  
+  const ctBase64 = btoa(String.fromCharCode(...new Uint8Array(ct)));
+  const ivBase64 = btoa(String.fromCharCode(...iv));
+  
+  return { ciphertext: ctBase64, iv: ivBase64 };
+}
+
 const MP_URL = (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`;
 const DATASET_SAMPLES = [
   "/data/images/calib_000_029185.jpg",
@@ -103,8 +140,8 @@ function updateSubmitReadiness() {
   if (selectedEmbedding) {
     elements.submitReadiness.classList.add("submit-readiness--real");
     elements.readinessTitle.textContent = "Quality-passed ONNX embedding ready";
-    elements.readinessDetail.textContent = "Submit will send the selected 128D ArcFace P3 vector as plaintext JSON.";
-    elements.submitModeText.textContent = "Real ONNX";
+    elements.readinessDetail.textContent = "Submit will encrypt vector using AES-GCM-256 before transmission.";
+    elements.submitModeText.textContent = "AES-GCM ONNX";
     updateSubmitButton();
     return;
   }
@@ -466,9 +503,15 @@ async function createBookingFlow(event) {
 
     if (elements.registerFace.checked) {
       lastEmbedding = selectedEmbedding;
+      log("Encrypting face embedding with AES-GCM-256...");
+      const encrypted = await encryptVectorAESGCM(lastEmbedding);
       const registered = await requestJson("/api/face/register", {
         method: "POST",
-        body: JSON.stringify({ booking_id: booking.id, embedding: lastEmbedding }),
+        body: JSON.stringify({
+          booking_id: booking.id,
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv
+        }),
       });
       const synced = await requestJson(`/api/sync/${flight.id}`);
       elements.pointText.textContent = registered.point_id;

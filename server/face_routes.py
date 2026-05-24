@@ -12,6 +12,11 @@ from server.vector_service import (
     upsert_face_embedding,
     validate_embedding,
 )
+from server.crypto_service import (
+    decrypt_aes_gcm_vector,
+    encrypt_xtea_vector,
+    decrypt_xtea_vector,
+)
 
 router = APIRouter(prefix="/api", tags=["face"])
 MATCH_DISTANCE_THRESHOLD = 0.045
@@ -19,12 +24,16 @@ MATCH_DISTANCE_THRESHOLD = 0.045
 
 class FaceRegisterRequest(BaseModel):
     booking_id: int
-    embedding: list[float] = Field(min_length=128, max_length=128)
+    ciphertext: str | None = None
+    iv: str | None = None
+    embedding: list[float] | None = None
 
 
 class FaceMatchRequest(BaseModel):
     flight_id: int
-    embedding: list[float] = Field(min_length=128, max_length=128)
+    ciphertext: str | None = None
+    iv: str | None = None
+    embedding: list[float] | None = None
     threshold: float = MATCH_DISTANCE_THRESHOLD
 
 
@@ -48,10 +57,22 @@ def build_face_payload(booking: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/face/register", status_code=201)
 def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
-    try:
-        vector = validate_embedding(payload.embedding)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Determine the vector
+    if payload.ciphertext is not None and payload.iv is not None:
+        try:
+            vector = decrypt_aes_gcm_vector(payload.ciphertext, payload.iv)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"AES-GCM decryption failed: {str(exc)}") from exc
+    elif payload.embedding is not None:
+        try:
+            vector = validate_embedding(payload.embedding)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Either encrypted vector (ciphertext + iv) or plaintext embedding must be provided",
+        )
 
     booking = get_booking(payload.booking_id)
     point_id = str(uuid4())
@@ -74,8 +95,22 @@ def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
 
 @router.post("/face/match")
 def match_face(payload: FaceMatchRequest) -> dict[str, Any]:
+    # Determine the vector
+    if payload.ciphertext is not None and payload.iv is not None:
+        try:
+            vector = decrypt_xtea_vector(payload.ciphertext, payload.iv)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"XTEA-CTR decryption failed: {str(exc)}") from exc
+    elif payload.embedding is not None:
+        vector = payload.embedding
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Either encrypted vector (ciphertext + iv) or plaintext embedding must be provided",
+        )
+
     try:
-        results = search_face_embedding(payload.embedding, payload.flight_id, limit=1)
+        results = search_face_embedding(vector, payload.flight_id, limit=1)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -102,11 +137,16 @@ def sync_flight_cache(flight_id: int) -> dict[str, Any]:
     records = scroll_flight_embeddings(flight_id)
     items = []
     for record in records:
-        items.append(
-            {
-                "point_id": str(record.id),
-                "embedding": record.vector,
-                "payload": record.payload,
-            }
-        )
+        try:
+            ciphertext, iv = encrypt_xtea_vector(record.vector)
+            items.append(
+                {
+                    "point_id": str(record.id),
+                    "ciphertext": ciphertext,
+                    "iv": iv,
+                    "payload": record.payload,
+                }
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to encrypt sync data: {str(exc)}") from exc
     return {"flight_id": flight_id, "count": len(items), "items": items}
