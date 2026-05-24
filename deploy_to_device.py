@@ -25,6 +25,7 @@ FILES = [
     ("MaixCAM_App/config.py",     "/root/config.py"),
     ("MaixCAM_App/sync_cache.py", "/root/sync_cache.py"),
     ("MaixCAM_App/display.py",    "/root/display.py"),
+    ("MaixCAM_App/mjpeg_server.py", "/root/mjpeg_server.py"),
     ("MaixCAM_App/main.py",       "/root/main.py"),
     ("MaixCAM_App/config.json",   "/root/config.json"),
 ]

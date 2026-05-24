@@ -10,6 +10,7 @@ from sync_cache import CacheManager
 from display import (
     draw_match_result, draw_status, draw_hud, draw_no_match
 )
+import mjpeg_server
 
 # =====================================================================
 # CONFIG & CACHE INIT
@@ -303,9 +304,20 @@ def main():
     cam_w = FACE_DET.input_width()
     cam_h = FACE_DET.input_height()
     cam  = camera.Camera(cam_w, cam_h, FACE_DET.input_format())
-    disp = display.Display()
+    
+    enable_lcd = CFG.get("enable_lcd", True)
+    disp = None
+    if enable_lcd:
+        try:
+            disp = display.Display()
+            print("Display: {}x{}".format(disp.width(), disp.height()))
+        except Exception as e:
+            print("Failed to initialize LCD display:", e)
+            disp = None
+    else:
+        print("LCD Display is disabled in config")
 
-    print("Display: {}x{}".format(disp.width(), disp.height()))
+    mjpeg_server.start_server(8080)
     print("Camera:  {}x{}".format(cam_w, cam_h))
     print("Server:  {}".format(CFG["server_url"]))
     print("Pipeline: YOLO -> v9 landmarks -> ArcFace P3 -> cache match")
@@ -455,7 +467,10 @@ def main():
                  flight_id=active_flight,
                  threshold=RECOG_THRESH)
 
-        disp.show(img)
+        if disp:
+            disp.show(img)
+        mjpeg_server.update_frame(img)
+        time.sleep(0.005)
 
         frame_idx += 1
         if frame_idx % 30 == 0:
