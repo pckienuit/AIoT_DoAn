@@ -7,11 +7,13 @@ import numpy as np
 import onnxruntime as ort
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+MODEL_DIR = os.path.join(PROJECT_DIR, "models", "exports")
 MODELS = {
-    "SFace (FP32)": os.path.join(SCRIPT_DIR, "models", "face_recognition_sface_2021dec.onnx"),
-    "SFace (INT8)": os.path.join(SCRIPT_DIR, "models", "face_recognition_sface_2021dec_int8.onnx"),
-    "V9 Landmarks": os.path.join(SCRIPT_DIR, "models", "face_detect_v9.onnx"),
-    "ArcFace P3": os.path.join(SCRIPT_DIR, "models", "face_recognize_arcface_p3.onnx"),
+    "SFace (FP32)": os.path.join(MODEL_DIR, "face_recognition_sface_2021dec.onnx"),
+    "SFace (INT8)": os.path.join(MODEL_DIR, "face_recognition_sface_2021dec_int8.onnx"),
+    "V9 Landmarks": os.path.join(MODEL_DIR, "face_detect_v9.onnx"),
+    "ArcFace P3": os.path.join(MODEL_DIR, "face_recognize_arcface_p3.onnx"),
 }
 
 WARMUP_RUNS = 10

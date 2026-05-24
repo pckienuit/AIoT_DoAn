@@ -582,28 +582,32 @@ function getTensorFromCanvasP3(canvas) {
 // ════════════════════════════════════════════════
 //  System Init
 // ════════════════════════════════════════════════
+async function loadOptionalModel(path) {
+    try {
+        return await ort.InferenceSession.create(path, { executionProviders: ['wasm'] });
+    } catch (e) {
+        console.warn(`Optional model not loaded: ${path}`, e);
+        return null;
+    }
+}
+
 async function initONNX() {
     try {
-        statusEl.textContent = 'Loading ONNX models (SFace FP32/INT8, V9, P3)...';
-        
-        ortSessionSFaceFP32 = await ort.InferenceSession.create(
-            '/models/face_recognition_sface_2021dec.onnx',
-            { executionProviders: ['wasm'] }
-        );
-        ortSessionSFaceINT8 = await ort.InferenceSession.create(
-            '/models/face_recognition_sface_2021dec_int8.onnx',
-            { executionProviders: ['wasm'] }
-        );
+        statusEl.textContent = 'Loading ONNX models (V9, P3)...';
+
+        ortSessionSFaceFP32 = await loadOptionalModel('/models/exports/face_recognition_sface_2021dec.onnx');
+        ortSessionSFaceINT8 = await loadOptionalModel('/models/exports/face_recognition_sface_2021dec_int8.onnx');
         ortSessionV9 = await ort.InferenceSession.create(
-            '/models/face_detect_v9.onnx',
+            '/models/exports/face_detect_v9.onnx',
             { executionProviders: ['wasm'] }
         );
         ortSessionP3 = await ort.InferenceSession.create(
-            '/models/face_recognize_arcface_p3.onnx',
+            '/models/exports/face_recognize_arcface_p3.onnx',
             { executionProviders: ['wasm'] }
         );
-        
-        statusEl.textContent = '⚡ V9 + ArcFace P3 Pipeline Loaded & Ready!';
+
+        const optionalCount = [ortSessionSFaceFP32, ortSessionSFaceINT8].filter(Boolean).length;
+        statusEl.textContent = `⚡ V9 + ArcFace P3 Pipeline Loaded & Ready! Optional SFace: ${optionalCount}/2`;
     } catch(e) {
         statusEl.textContent = 'Model Loading Error: ' + e.message;
         statusEl.style.color = 'var(--accent-error)';
@@ -1052,7 +1056,14 @@ benchmarkBtn.addEventListener('click', async () => {
 
     for (let m of modelsToBench) {
         if (!m.session) {
-            benchmarkStatus.textContent = `Error: ${m.name} session not loaded.`;
+            const row = document.createElement('tr');
+            row.innerHTML = `
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); font-weight: 600; color: var(--text-muted);">${m.name}</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: center; font-family: monospace; color: var(--text-muted);">[${m.shape.join(', ')}]</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: right; color: var(--accent-warning);">Skipped</td>
+            <td style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--card-border); text-align: right; color: var(--text-muted);">Missing file</td>
+        `;
+            benchmarkTbody.appendChild(row);
             continue;
         }
 
