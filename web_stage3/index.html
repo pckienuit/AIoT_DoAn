@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stage 3 Flight Face Registration Console</title>
+  <meta name="description" content="Prototype Web UI for creating passenger bookings and optionally registering face embeddings to the AIoT Flight Face backend." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero" aria-labelledby="page-title">
+      <div class="hero__mark" aria-hidden="true">03</div>
+      <div>
+        <p class="eyebrow">AIoT Flight Face Lookup · Stage 3 Prototype</p>
+        <h1 id="page-title">Web → FastAPI → Qdrant registration console</h1>
+        <p class="hero__copy">Tạo passenger, flight, booking và chọn có đăng ký face hay không. Prototype hiện gửi plaintext 128D embedding để kiểm thử luồng trước khi thêm mã hóa.</p>
+      </div>
+      <div class="health-panel" aria-label="Backend status">
+        <button id="checkHealthBtn" class="button button--ghost" type="button">Check backend</button>
+        <div id="healthText" class="status-line">Not checked</div>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <form id="registrationForm" class="panel form-panel">
+        <div class="panel__header">
+          <span class="step-badge">A</span>
+          <div>
+            <h2>Create booking</h2>
+            <p>Thông tin hành khách và chuyến bay để tạo booking metadata.</p>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <label>Passenger name
+            <input id="passengerName" name="passengerName" required value="Nguyen Van Prototype" />
+          </label>
+          <label>Email
+            <input id="passengerEmail" name="passengerEmail" required type="email" />
+          </label>
+          <label>Phone
+            <input id="passengerPhone" name="passengerPhone" value="0900000003" />
+          </label>
+          <label>Flight code
+            <input id="flightCode" name="flightCode" required />
+          </label>
+          <label>Destination
+            <input id="destination" name="destination" required value="Ha Noi" />
+          </label>
+          <label>Gate
+            <input id="gate" name="gate" value="C7" />
+          </label>
+          <label>Departure time
+            <input id="departureTime" name="departureTime" required value="2026-05-24T18:00:00+07:00" />
+          </label>
+          <label>Boarding time
+            <input id="boardingTime" name="boardingTime" value="2026-05-24T17:20:00+07:00" />
+          </label>
+          <label>Seat number
+            <input id="seatNumber" name="seatNumber" value="14F" />
+          </label>
+        </div>
+
+        <div class="option-card">
+          <div>
+            <strong>Register face after booking</strong>
+            <span>Optional. Nếu bật, web sẽ tạo test embedding 128D và gọi `/api/face/register`.</span>
+          </div>
+          <label class="switch" aria-label="Toggle face registration">
+            <input id="registerFace" type="checkbox" checked />
+            <span></span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="submitBtn" class="button button--primary" type="submit">Create booking flow</button>
+          <button id="resetBtn" class="button button--ghost" type="button">Reset sample</button>
+        </div>
+      </form>
+
+      <aside class="panel telemetry-panel">
+        <div class="panel__header">
+          <span class="step-badge">B</span>
+          <div>
+            <h2>Runtime telemetry</h2>
+            <p>Trạng thái API, booking, Qdrant point và sync cache.</p>
+          </div>
+        </div>
+
+        <div class="metric-stack">
+          <div class="metric">
+            <span>API base</span>
+            <strong id="apiBaseText">http://127.0.0.1:8010</strong>
+          </div>
+          <div class="metric">
+            <span>Last booking</span>
+            <strong id="bookingText">None</strong>
+          </div>
+          <div class="metric">
+            <span>Face point</span>
+            <strong id="pointText">None</strong>
+          </div>
+          <div class="metric">
+            <span>Sync count</span>
+            <strong id="syncText">0</strong>
+          </div>
+        </div>
+
+        <button id="matchBtn" class="button button--secondary" type="button" disabled>Run match test</button>
+        <pre id="logOutput" class="log-output" aria-live="polite">Ready. Start by checking backend or creating a booking.</pre>
+      </aside>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
