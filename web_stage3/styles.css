@@ -383,6 +383,18 @@ input:focus {
 .face-preview video { display: none; }
 .face-preview.has-video video { display: block; }
 .face-preview.has-video canvas { opacity: 0.55; }
+
+.quality-strip {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 255, 63, 0.28);
+  color: var(--signal-2);
+  background: rgba(214, 255, 63, 0.06);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .is-hidden { display: none !important; }
 
 .submit-readiness {

@@ -307,24 +307,31 @@ sequenceDiagram
 
 ### Giai đoạn 2: Server Backend (2 tuần)
 
-| # | Task | Output |
-|:--|:---|:---|
-| 2.1 | Khởi tạo FastAPI + SQLite schema (passengers, flights, bookings) | `server/` directory |
-| 2.2 | Setup **Qdrant** Docker, tạo collection `face_embeddings` (HNSW, cosine) | `docker-compose.yml` |
-| 2.3 | API: CRUD bookings + flights (SQL) | REST endpoints |
-| 2.4 | API: Face register → AES-GCM decrypt → upsert Qdrant | `/api/face/register` |
-| 2.5 | API: Face match → Qdrant ANN search by flight_id | `/api/face/match` |
-| 2.6 | API: Sync cache → Qdrant scroll by payload → JSON response | `/api/sync/:flight_id` |
+| # | Task | Output | Trạng thái |
+|:--|:---|:---|:---|
+| 2.1 | Khởi tạo FastAPI + SQLite schema (passengers, flights, bookings) | `server/database.py`, `server/main.py` | ✅ Xong |
+| 2.2 | Setup **Qdrant** Docker, tạo collection `face_embeddings` (HNSW, cosine) | `docker-compose.yml`, `server/vector_service.py` | ✅ Xong |
+| 2.3 | API: CRUD passengers + flights + bookings (SQL) | `server/routes.py` REST endpoints | ✅ Xong |
+| 2.4 | API: Face register → plaintext 128D vector → upsert Qdrant | `POST /api/face/register` | ✅ Xong prototype |
+| 2.5 | API: Face match → Qdrant ANN search by flight_id | `POST /api/face/match` | ✅ Xong |
+| 2.6 | API: Sync cache → Qdrant scroll by payload → JSON response | `GET /api/sync/{flight_id}` | ✅ Xong |
+
+> **Cập nhật 2026-05-24:** Prototype backend dùng plaintext ArcFace P3 vector 128D để test ổn định luồng Web → FastAPI → Qdrant. AES-GCM client/server sẽ triển khai ở giai đoạn bảo mật sau khi prototype ổn định.
 
 ### Giai đoạn 3: Web Frontend Đặt Vé (2 tuần)
 
-| # | Task | Output |
-|:--|:---|:---|
-| 3.1 | UI đặt vé: chọn chuyến, điền thông tin, thanh toán mock | Trang booking |
-| 3.2 | UI đăng ký khuôn mặt: video 5s + hướng dẫn xoay đầu | Trang face register |
-| 3.3 | Logic multi-frame: chọn 7 khung tốt nhất, trung bình vector | JS pipeline |
-| 3.4 | Kiểm tra chất lượng: ánh sáng, góc, score | Quality gate |
-| 3.5 | Encrypt + gửi lên server | Integration test |
+| # | Task | Output | Trạng thái |
+|:--|:---|:---|:---|
+| 3.1 | Tạo web prototype riêng, không đụng folder `web/` benchmark cũ | `web_stage3/index.html`, `styles.css`, `app.js` | ✅ Xong |
+| 3.2 | UI tạo passenger, flight, booking và chọn opt-in/opt-out face registration | Stage 3 dashboard form | ✅ Xong |
+| 3.3 | Reuse MediaPipe + V9 + ArcFace P3 trong browser để tạo embedding thật từ upload/webcam/dataset | `web_stage3/app.js` real ONNX pipeline | ✅ Xong |
+| 3.4 | Submit readiness indicator: Real ONNX / fallback test vector / skip face | Dashboard status panel + telemetry metric | ✅ Xong |
+| 3.5 | Integration test: booking → optional face register → sync → match | Browser-tested with dataset image | ✅ Xong prototype |
+| 3.6 | Logic multi-frame: chọn 7 khung tốt nhất, trung bình vector | Webcam burst capture + average top frames | ✅ Xong prototype |
+| 3.7 | Quality gate: ánh sáng, góc, score và hướng dẫn retry | Brightness/V9/pose quality strip + blocking submit | ✅ Xong prototype |
+| 3.8 | AES-GCM encrypt + server decrypt | Secure vector transport | ⏳ Hoãn theo quyết định prototype |
+
+> **Cập nhật 2026-05-24:** `web_stage3` đã chặn submit khi opt-in face nhưng chưa có real quality-passed embedding. Dataset E2E đã xác nhận score 0.974, brightness 131, sync count 1, match score 1.0/distance 0. Webcam path đã có burst 12 frame, chọn tối đa 7 frame tốt nhất rồi average + L2 normalize.
 
 ### Giai đoạn 4: Edge Integration (2 tuần)
 

@@ -7,6 +7,15 @@ const DATASET_SAMPLES = [
   "/data/images/calib_003_064197.jpg",
   "/data/images/calib_004_058514.jpg",
 ];
+const QUALITY_RULES = {
+  minScore: 0.5,
+  minBrightness: 80,
+  maxBrightness: 220,
+  burstFrames: 12,
+  targetFrames: 7,
+  minBurstFrames: 3,
+  frameDelayMs: 180,
+};
 
 const elements = {
   form: document.querySelector("#registrationForm"),
@@ -23,6 +32,7 @@ const elements = {
   flightCode: document.querySelector("#flightCode"),
   registerFace: document.querySelector("#registerFace"),
   embeddingStatus: document.querySelector("#embeddingStatus"),
+  qualityText: document.querySelector("#qualityText"),
   faceFileInput: document.querySelector("#faceFileInput"),
   cameraVideo: document.querySelector("#cameraVideo"),
   facePreviewCanvas: document.querySelector("#facePreviewCanvas"),
@@ -48,6 +58,7 @@ let ortSessionP3 = null;
 let detector = null;
 let cameraStream = null;
 let activeSource = "upload";
+let isSubmitting = false;
 
 function sampleSuffix() {
   return String(Date.now()).slice(-6);
@@ -69,6 +80,14 @@ function setEmbeddingStatus(message) {
   elements.embeddingStatus.textContent = message;
 }
 
+function updateSubmitButton() {
+  elements.submitBtn.disabled = isSubmitting || (elements.registerFace.checked && !selectedEmbedding);
+}
+
+function updateQualityText(message = "Quality gate waits for a face sample.") {
+  elements.qualityText.textContent = message;
+}
+
 function updateSubmitReadiness() {
   elements.submitReadiness.classList.remove("submit-readiness--real", "submit-readiness--fallback", "submit-readiness--skip");
 
@@ -77,21 +96,24 @@ function updateSubmitReadiness() {
     elements.readinessTitle.textContent = "Face registration skipped";
     elements.readinessDetail.textContent = "Booking will be created without sending any embedding to Qdrant.";
     elements.submitModeText.textContent = "Skip face";
+    updateSubmitButton();
     return;
   }
 
   if (selectedEmbedding) {
     elements.submitReadiness.classList.add("submit-readiness--real");
-    elements.readinessTitle.textContent = "Real ONNX embedding ready";
+    elements.readinessTitle.textContent = "Quality-passed ONNX embedding ready";
     elements.readinessDetail.textContent = "Submit will send the selected 128D ArcFace P3 vector as plaintext JSON.";
     elements.submitModeText.textContent = "Real ONNX";
+    updateSubmitButton();
     return;
   }
 
   elements.submitReadiness.classList.add("submit-readiness--fallback");
-  elements.readinessTitle.textContent = "Fallback vector mode";
-  elements.readinessDetail.textContent = "Face registration is ON, but no real embedding is selected yet. Submit will use a deterministic test vector.";
-  elements.submitModeText.textContent = "Fallback vector";
+  elements.readinessTitle.textContent = "Quality capture required";
+  elements.readinessDetail.textContent = "Face registration is ON. Capture a quality-passed real embedding before creating the booking.";
+  elements.submitModeText.textContent = "Waiting for face";
+  updateSubmitButton();
 }
 
 async function requestJson(path, options = {}) {
@@ -199,6 +221,58 @@ function drawContain(source, canvas) {
   context.drawImage(source, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
 }
 
+function calculateMeanLuminance(canvas, box) {
+  const context = canvas.getContext("2d");
+  const x = Math.max(0, Math.floor(box.x));
+  const y = Math.max(0, Math.floor(box.y));
+  const w = Math.min(canvas.width - x, Math.floor(box.w));
+  const h = Math.min(canvas.height - y, Math.floor(box.h));
+  if (w <= 0 || h <= 0) return 0;
+
+  const data = context.getImageData(x, y, w, h).data;
+  let total = 0;
+  const stride = Math.max(4, Math.floor(data.length / 900 / 4) * 4);
+  let samples = 0;
+  for (let index = 0; index < data.length; index += stride) {
+    total += 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
+    samples += 1;
+  }
+  return total / Math.max(samples, 1);
+}
+
+function estimatePoseBucket(points) {
+  const leftEyeX = points[0];
+  const rightEyeX = points[2];
+  const noseX = points[4];
+  const eyeSpan = Math.max(Math.abs(rightEyeX - leftEyeX), 1);
+  const offset = (noseX - (leftEyeX + rightEyeX) / 2) / eyeSpan;
+  if (offset < -0.12) return "left";
+  if (offset > 0.12) return "right";
+  return "center";
+}
+
+function getQualityIssues(score, brightness) {
+  const issues = [];
+  if (score < QUALITY_RULES.minScore) issues.push(`V9 score ${score.toFixed(2)} < ${QUALITY_RULES.minScore}`);
+  if (brightness < QUALITY_RULES.minBrightness) issues.push(`too dark (${brightness.toFixed(0)})`);
+  if (brightness > QUALITY_RULES.maxBrightness) issues.push(`too bright (${brightness.toFixed(0)})`);
+  return issues;
+}
+
+function averageEmbeddings(results) {
+  const averaged = new Array(128).fill(0);
+  for (const result of results) {
+    result.vector.forEach((value, index) => {
+      averaged[index] += value;
+    });
+  }
+  return l2Normalize(averaged.map((value) => value / results.length));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function extractEmbeddingFromImageSource(source) {
   await initModels();
   const width = source.videoWidth || source.naturalWidth || source.width;
@@ -217,6 +291,7 @@ async function extractEmbeddingFromImageSource(source) {
   }
 
   const box = bboxToPixels(results.detections[0].boundingBox, width, height);
+  const brightness = calculateMeanLuminance(detectionCanvas, box);
   const cropW = box.w * 1.5;
   const cropH = box.h * 1.8;
   const cropX = box.x + box.w / 2 - cropW / 2;
@@ -241,13 +316,15 @@ async function extractEmbeddingFromImageSource(source) {
   const classKey = ortSessionV9.outputNames.find((name) => name.includes("class")) || ortSessionV9.outputNames[0];
   const landmarkKey = ortSessionV9.outputNames.find((name) => name.includes("landmark")) || ortSessionV9.outputNames[2] || ortSessionV9.outputNames[1];
   const score = 1.0 / (1.0 + Math.exp(-outV9[classKey].data[0]));
-  if (score <= 0.4) throw new Error(`Low landmark confidence: ${score.toFixed(2)}`);
 
   const landmarks = outV9[landmarkKey].data;
   const points = [];
   for (let index = 0; index < 5; index += 1) {
     points.push(landmarks[index * 2] * cropW + cropX, landmarks[index * 2 + 1] * cropH + cropY);
   }
+
+  const issues = getQualityIssues(score, brightness);
+  if (issues.length > 0) throw new Error(`Quality gate failed: ${issues.join(", ")}`);
 
   const xs = [points[0], points[2], points[4], points[6], points[8]];
   const ys = [points[1], points[3], points[5], points[7], points[9]];
@@ -277,7 +354,7 @@ async function extractEmbeddingFromImageSource(source) {
   preview.clearRect(0, 0, 224, 224);
   preview.imageSmoothingEnabled = true;
   preview.drawImage(p3Canvas, 0, 0, 224, 224);
-  return { vector, score };
+  return { vector, score, brightness, pose: estimatePoseBucket(points) };
 }
 
 async function loadImageFromUrl(url) {
@@ -291,17 +368,26 @@ async function loadImageFromUrl(url) {
 async function processImageSource(source, label) {
   try {
     setEmbeddingStatus(`Extracting embedding from ${label}...`);
+    updateQualityText("Running score and brightness checks...");
     const result = await extractEmbeddingFromImageSource(source);
     selectedEmbedding = result.vector;
     lastEmbedding = selectedEmbedding;
     updateSubmitReadiness();
     elements.facePreview.classList.remove("has-video");
     setEmbeddingStatus(`Real embedding ready from ${label}. V9 score=${result.score.toFixed(3)} · dims=${selectedEmbedding.length}`);
-    log("Real face embedding extracted", { source: label, score: result.score, dims: selectedEmbedding.length });
+    updateQualityText(`Accepted 1 frame · brightness=${result.brightness.toFixed(0)} · pose=${result.pose}`);
+    log("Quality-passed face embedding extracted", {
+      source: label,
+      score: result.score,
+      brightness: result.brightness,
+      pose: result.pose,
+      dims: selectedEmbedding.length,
+    });
   } catch (error) {
     selectedEmbedding = null;
     updateSubmitReadiness();
     setEmbeddingStatus(`Embedding failed: ${error.message}`);
+    updateQualityText("Retry with a clear, evenly lit face. For webcam, move left/right slightly during burst capture.");
     log("Embedding extraction failed", { source: label, error: error.message });
   }
 }
@@ -343,7 +429,14 @@ function getFormPayload() {
 
 async function createBookingFlow(event) {
   event.preventDefault();
-  elements.submitBtn.disabled = true;
+  if (elements.registerFace.checked && !selectedEmbedding) {
+    updateSubmitReadiness();
+    log("Booking blocked: face opt-in requires a quality-passed real embedding");
+    return;
+  }
+
+  isSubmitting = true;
+  updateSubmitButton();
   elements.matchBtn.disabled = true;
   log("Starting booking flow...");
 
@@ -372,7 +465,7 @@ async function createBookingFlow(event) {
     log("Booking created", { passenger, flight, booking });
 
     if (elements.registerFace.checked) {
-      lastEmbedding = selectedEmbedding || createUnitEmbedding(`${booking.booking_code}:${passenger.email}`);
+      lastEmbedding = selectedEmbedding;
       const registered = await requestJson("/api/face/register", {
         method: "POST",
         body: JSON.stringify({ booking_id: booking.id, embedding: lastEmbedding }),
@@ -382,7 +475,7 @@ async function createBookingFlow(event) {
       elements.syncText.textContent = String(synced.count);
       elements.matchBtn.disabled = false;
       log("Face registered and synced", {
-        embedding_source: selectedEmbedding ? "real_onnx" : "fallback_test_vector",
+        embedding_source: "real_onnx_quality_passed",
         registered,
         synced_count: synced.count,
       });
@@ -395,7 +488,8 @@ async function createBookingFlow(event) {
   } catch (error) {
     log("Flow failed", { error: error.message });
   } finally {
-    elements.submitBtn.disabled = false;
+    isSubmitting = false;
+    updateSubmitButton();
   }
 }
 
@@ -435,13 +529,63 @@ async function startCamera() {
   await elements.cameraVideo.play();
   elements.captureCameraBtn.disabled = false;
   elements.facePreview.classList.add("has-video");
-  setEmbeddingStatus("Webcam started. Capture a frame to extract embedding.");
+  setEmbeddingStatus("Webcam started. Use burst capture and slowly turn left/right.");
+  updateQualityText(`Burst will keep up to ${QUALITY_RULES.targetFrames} best frames after quality checks.`);
 }
 
 async function captureCameraFrame() {
   if (!elements.cameraVideo.videoWidth) return;
-  drawContain(elements.cameraVideo, elements.facePreviewCanvas);
-  await processImageSource(elements.cameraVideo, "webcam");
+  selectedEmbedding = null;
+  updateSubmitReadiness();
+  elements.captureCameraBtn.disabled = true;
+  setEmbeddingStatus("Capturing webcam quality burst...");
+  updateQualityText("Keep your face centered, then slowly rotate left/right.");
+
+  const accepted = [];
+  const rejected = [];
+  for (let index = 0; index < QUALITY_RULES.burstFrames; index += 1) {
+    try {
+      drawContain(elements.cameraVideo, elements.facePreviewCanvas);
+      const result = await extractEmbeddingFromImageSource(elements.cameraVideo);
+      accepted.push(result);
+      updateQualityText(`Accepted ${accepted.length}/${QUALITY_RULES.targetFrames} · latest score=${result.score.toFixed(2)} · brightness=${result.brightness.toFixed(0)} · pose=${result.pose}`);
+    } catch (error) {
+      rejected.push(error.message);
+    }
+    await wait(QUALITY_RULES.frameDelayMs);
+  }
+
+  const topFrames = accepted
+    .sort((a, b) => b.score - a.score)
+    .slice(0, QUALITY_RULES.targetFrames);
+
+  if (topFrames.length < QUALITY_RULES.minBurstFrames) {
+    selectedEmbedding = null;
+    updateSubmitReadiness();
+    elements.captureCameraBtn.disabled = false;
+    setEmbeddingStatus("Webcam burst failed quality gate.");
+    updateQualityText(`Only ${topFrames.length} usable frames. Need at least ${QUALITY_RULES.minBurstFrames}. Improve light and retry.`);
+    log("Webcam burst rejected", { accepted: accepted.length, rejected: rejected.slice(0, 5) });
+    return;
+  }
+
+  selectedEmbedding = averageEmbeddings(topFrames);
+  lastEmbedding = selectedEmbedding;
+  updateSubmitReadiness();
+  elements.captureCameraBtn.disabled = false;
+  const poses = [...new Set(topFrames.map((frame) => frame.pose))];
+  const avgScore = topFrames.reduce((sum, frame) => sum + frame.score, 0) / topFrames.length;
+  const avgBrightness = topFrames.reduce((sum, frame) => sum + frame.brightness, 0) / topFrames.length;
+  setEmbeddingStatus(`Averaged webcam embedding ready · frames=${topFrames.length} · dims=${selectedEmbedding.length}`);
+  updateQualityText(`Accepted ${topFrames.length} best frames · avg score=${avgScore.toFixed(3)} · brightness=${avgBrightness.toFixed(0)} · poses=${poses.join("/")}`);
+  log("Webcam multi-frame embedding extracted", {
+    accepted: topFrames.length,
+    captured: QUALITY_RULES.burstFrames,
+    poses,
+    avgScore,
+    avgBrightness,
+    dims: selectedEmbedding.length,
+  });
 }
 
 elements.checkHealthBtn.addEventListener("click", checkBackend);

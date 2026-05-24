@@ -90,9 +90,9 @@
               <input id="faceFileInput" type="file" accept="image/*" />
             </label>
             <div class="source-control is-hidden" id="cameraControl">
-              <span>Webcam capture</span>
+              <span>Webcam burst capture</span>
               <button id="startCameraBtn" class="button button--ghost" type="button">Start webcam</button>
-              <button id="captureCameraBtn" class="button button--ghost" type="button" disabled>Capture frame</button>
+              <button id="captureCameraBtn" class="button button--ghost" type="button" disabled>Capture 12-frame burst</button>
             </div>
             <div class="source-control is-hidden" id="datasetControl">
               <span>Dataset sample</span>
@@ -104,6 +104,7 @@
             </div>
           </div>
           <div id="embeddingStatus" class="status-line">Models not loaded yet.</div>
+          <div id="qualityText" class="quality-strip">Quality gate waits for a face sample.</div>
         </div>
 
         <div id="submitReadiness" class="submit-readiness submit-readiness--fallback" role="status" aria-live="polite">
