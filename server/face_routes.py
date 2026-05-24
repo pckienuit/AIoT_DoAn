@@ -1,0 +1,112 @@
+from typing import Any
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from server.database import get_connection
+from server.routes import get_booking
+from server.vector_service import (
+    search_face_embedding,
+    scroll_flight_embeddings,
+    upsert_face_embedding,
+    validate_embedding,
+)
+
+router = APIRouter(prefix="/api", tags=["face"])
+MATCH_DISTANCE_THRESHOLD = 0.045
+
+
+class FaceRegisterRequest(BaseModel):
+    booking_id: int
+    embedding: list[float] = Field(min_length=128, max_length=128)
+
+
+class FaceMatchRequest(BaseModel):
+    flight_id: int
+    embedding: list[float] = Field(min_length=128, max_length=128)
+    threshold: float = MATCH_DISTANCE_THRESHOLD
+
+
+def build_face_payload(booking: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "booking_id": booking["id"],
+        "booking_code": booking["booking_code"],
+        "passenger_id": booking["passenger_id"],
+        "passenger_name": booking["passenger_name"],
+        "passenger_email": booking["passenger_email"],
+        "flight_id": booking["flight_id"],
+        "flight_code": booking["flight_code"],
+        "destination": booking["destination"],
+        "gate": booking["gate"],
+        "seat_number": booking["seat_number"],
+        "departure_time": booking["departure_time"],
+        "boarding_time": booking["boarding_time"],
+        "flight_status": booking["flight_status"],
+    }
+
+
+@router.post("/face/register", status_code=201)
+def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
+    try:
+        vector = validate_embedding(payload.embedding)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    booking = get_booking(payload.booking_id)
+    point_id = str(uuid4())
+    face_payload = build_face_payload(booking)
+    upsert_face_embedding(point_id, vector, face_payload)
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE bookings
+            SET qdrant_point_id = ?, face_registered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (point_id, payload.booking_id),
+        )
+
+    updated_booking = get_booking(payload.booking_id)
+    return {"status": "registered", "point_id": point_id, "booking": updated_booking}
+
+
+@router.post("/face/match")
+def match_face(payload: FaceMatchRequest) -> dict[str, Any]:
+    try:
+        results = search_face_embedding(payload.embedding, payload.flight_id, limit=1)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not results:
+        return {"matched": False, "distance": None, "score": None, "booking": None}
+
+    hit = results[0]
+    score = float(hit.score)
+    distance = 1.0 - score
+    matched = distance <= payload.threshold
+    booking = get_booking(int(hit.payload["booking_id"])) if matched else None
+    return {
+        "matched": matched,
+        "distance": distance,
+        "score": score,
+        "threshold": payload.threshold,
+        "point_id": str(hit.id),
+        "booking": booking,
+    }
+
+
+@router.get("/sync/{flight_id}")
+def sync_flight_cache(flight_id: int) -> dict[str, Any]:
+    records = scroll_flight_embeddings(flight_id)
+    items = []
+    for record in records:
+        items.append(
+            {
+                "point_id": str(record.id),
+                "embedding": record.vector,
+                "payload": record.payload,
+            }
+        )
+    return {"flight_id": flight_id, "count": len(items), "items": items}
