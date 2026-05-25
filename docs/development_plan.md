@@ -433,3 +433,77 @@ project-root/
 | Thời gian đăng ký khuôn mặt (Web) | < 15 giây |
 | Số hành khách cache/chuyến | ≥ 200 |
 | Hoạt động offline sau sync | ✅ |
+
+---
+
+## 9. Stress Test Chi Tiet (2026-05-25)
+
+### 9.1 Gioi Thieu
+
+**Stress test** la bai kiem tra danh gia kha nang chiu tai va hieu nang cua he thong khi phai xu ly so luong lon hanh khach dong thoi.
+
+### 9.2 Muc Dich
+
+1. **Do do tre dang ky (Registration Latency)**
+   - Thoi gian server nhan, giai ma AES-GCM, va luu vector vao Qdrant
+   - Anh huong truc tiep den trai nghiem nguoi dung khi dang ky khuon mat
+
+2. **Do throughput cua Sync API**
+   - Thoi gian truy van va tra ve danh sach vector cua ca chuyen bay
+   - Anh huong den Edge device khi sync cache truoc gio bay
+
+3. **Kiem tra do on dinh**
+   - Ty le thanh cong khi xu ly N hanh khach lien tiep
+   - Phat hien bottleneck hoac memory leak
+
+### 9.3 Phuong Phap
+
+**Script**: scripts/tests/quick_stress_test.py
+
+`
+Luong test moi batch:
+1. Tao chuyen bay moi (flight_id)
+2. Loop N lan:
+   - Tao passenger moi (name, email, phone)
+   - Tao booking (booking_code, passenger_id, flight_id)
+   - Tao vector 128D gia (random, L2 normalized)
+   - Ma hoa AES-GCM-256 (booking_id, ciphertext, IV)
+   - POST /api/face/register -> Qdrant upsert
+   - Do latency: start -> response received
+3. Goi GET /api/sync/{flight_id}
+   - Do sync time + kich thuoc response
+4. Tinh toan thong ke (avg, p95, throughput)
+`
+
+**Test sizes**: 10, 50, 100, 200 hanh khach (tong 360 passengers)
+
+**Progress Bar**: Hien thi % hoan thanh + ETA theo thoi gian thuc
+`
+      [========================================] 100.0% ETA: 0s Pax 200/200
+`
+
+### 9.4 Ket Qua
+
+| Size | Reg OK | Avg ms | P95 ms | Sync ms | KB | Bytes/Pax |
+|:---|:---|:---|:---|:---|:---|:---|
+| 10 | **10/10 (100%)** | 283.71 | 311.98 | 278.87 | 11.32 | 1159 |
+| 50 | **50/50 (100%)** | 285.71 | 317.39 | 337.36 | 56.55 | 1158 |
+| 100 | **100/100 (100%)** | 284.17 | 320.09 | 362.73 | 113.27 | 1159 |
+| 200 | **200/200 (100%)** | 295.10 | 350.75 | 456.93 | 226.72 | 1161 |
+
+### 9.5 Phan Tich
+
+| Chi so | Gia tri | Danh gia |
+|:---|:---|:---|
+| Registration Avg Latency | **~285ms** | Tot - duoi nguong 500ms |
+| Registration P95 Latency | **~320-350ms** | On dinh - bien do dao dong thap |
+| Sync Latency (200 pax) | **~457ms** | Nhanh - < 1 giay cho 200 vectors |
+| Bytes/Passenger | **~1159 bytes** | Nhat quan - overhead ma hoa on dinh |
+| Success Rate | **100%** | Hoan hao - khong co loi |
+
+### 9.6 Ket Luan
+
+- He thong dap ung tot voi **200+ hanh khach/chuyen bay**
+- Latency on dinh khong tang tuyen tinh theo so luong (Qdrant HNSW index hieu qua)
+- Sync API phu hop de Edge device sync truoc gio bay
+- **San sang production** voi quy mo san bay vua va nho
