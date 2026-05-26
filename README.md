@@ -1,18 +1,59 @@
-# Face Detection & Landmark — AIoT Project
+# Face Check-in System — AIoT Project
 
-A project for training a model to perform **face detection + 5 facial landmark regression** (left eye, right eye, nose, left mouth corner, right mouth corner) on the CelebA dataset, targeting deployment on **MaixCAM** (Sipeed Edge AI Camera) — an IoT edge device.
+An end-to-end facial-recognition-based flight information lookup system for airport check-in kiosks. Passengers look at a camera and automatically retrieve their flight details (gate, boarding time, seat, status) without presenting a boarding pass.
+
+The system has three major components:
+
+1. **Web Client** — Face registration via browser (MediaPipe detection + V9 landmarks + ArcFace P3 embedding, AES-GCM-256 encryption)
+2. **FastAPI Server** — Stores passenger data (SQLite) and face embeddings (Qdrant vector DB), exposes REST API
+3. **MaixCAM Edge Device** — Real-time face recognition on a RISC-V edge device (YOLO detection + V9 landmarks + ArcFace P3, XTEA-CTR local cache)
 
 ---
 
 ## Table of Contents
 
-1. [Project Structure](#project-structure)
-2. [Installation](#installation)
-3. [Model & Architecture](#model--architecture)
-4. [Tools & Usage](#tools--usage)
-5. [.env Template](#env-template)
-6. [Evaluation Results](#evaluation-results)
-7. [References](#references)
+1. [System Architecture](#system-architecture)
+2. [Project Structure](#project-structure)
+3. [Installation](#installation)
+4. [Server Backend](#server-backend)
+5. [Edge Device (MaixCAM)](#edge-device-maixcam)
+6. [Web Client](#web-client)
+7. [AI Models](#ai-models)
+8. [Security](#security)
+9. [Performance Benchmarks](#performance-benchmarks)
+10. [Development Phases](#development-phases)
+11. [.env Template](#env-template)
+12. [References](#references)
+
+---
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Web Client (Browser)                                               │
+│  MediaPipe → V9 Landmarks → ArcFace P3 → AES-GCM-256 encrypt      │
+│  └─ POST /api/face/register {encrypted_vector, booking_id}        │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ HTTPS
+                                 ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  FastAPI Server                                                     │
+│  ├─ SQLite ── passengers / flights / bookings (metadata)           │
+│  └─ Qdrant ── face_embeddings collection (128D vectors, HNSW)      │
+│      ├─ POST /api/face/register   (decrypt → Qdrant upsert)       │
+│      ├─ POST /api/face/match       (Qdrant ANN search)              │
+│      └─ GET  /api/sync/{flight_id} (scroll → XTEA-CTR encrypt)    │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ HTTPS / WiFi
+                                 ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  MaixCAM Edge Device (RISC-V C906 @ 1GHz)                          │
+│  Camera GC4653 ── YOLOv8n ── V9 Landmarks ── ArcFace P3           │
+│  └─ XTEA-CTR decrypt → cosine match local cache (<1ms)            │
+│  └─ LCD / MJPEG stream (port 8080) / fallback to server API       │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -20,69 +61,139 @@ A project for training a model to perform **face detection + 5 facial landmark r
 
 ```
 d-AIoT-DoAn/
-├── .env                          # Environment variables (VPS, MaixCAM credentials)
+├── .env                              # Environment variables (VPS, MaixCAM, Server)
 ├── .gitignore
-├── labels.csv                    # Merged CelebA metadata: partition, bbox, landmarks, attrs
+├── README.md                         # This file
+├── labels.csv                        # Merged CelebA metadata CSV
+├── reorganize.py                     # Directory reorganization script
 │
-├── train.py                      # Original training script
-├── train_v8.py                   # Training v8 (light augmentation, Wing + Focal loss)
-├── train_v9.py                   # Training v9 — continuation of v8, 90 epochs, Gaussian noise, label smoothing
+├── server/                           # FastAPI backend server
+│   ├── main.py                       # FastAPI entry point, CORS, health endpoints
+│   ├── routes.py                     # CRUD: passengers, flights, bookings
+│   ├── face_routes.py                # Face register / match / sync endpoints
+│   ├── database.py                   # SQLite schema + session management
+│   ├── vector_service.py             # Qdrant client: upsert, search, scroll
+│   ├── crypto_service.py             # AES-GCM + XTEA-CTR encryption helpers
+│   ├── requirements.txt              # Python dependencies
+│   └── data/
+│       └── prototype.db              # SQLite database file
 │
-├── webcam_test.py                # Webcam: Haar Cascade (detect) → Model (landmark)
-├── webcam_test_v2.py            # Webcam: Model-only 2-pass (grid scan → aligned crop)
+├── MaixCAM_App/                      # Edge device app (runs on MaixCAM)
+│   ├── main.py                       # Full 3-stage pipeline: YOLO → V9 → P3 → cache
+│   ├── config.py                     # Configuration loader (server URL, thresholds)
+│   ├── config.json                   # Runtime configuration
+│   ├── sync_cache.py                 # Cache manager: sync encrypted vectors from server
+│   ├── display.py                    # LCD/overlay drawing helpers
+│   ├── mjpeg_server.py               # MJPEG HTTP stream server (port 8080)
+│   └── stress_test_maixcam.py        # On-device stress test
 │
-├── inference_test.py             # Quick inference test on CelebA images
-├── evaluate_models.py            # Comparative evaluation of all checkpoints (Acc, F1, AUC, NME, MAE)
-├── prepare_data.py              # Merge 4 CelebA metadata files → labels.csv
-├── reorganize.py                # Reorganize project directory structure
-├── visualize.py                # Visualize training results
-├── check_vps_paths.py          # Verify paths on VPS
-├── vps_sync.py                 # Sync files between local and VPS via SSH/SFTP
+├── scripts/                          # All scripts: training, export, sync, tests
+│   ├── train/
+│   │   ├── train.py                 # Original training script
+│   │   ├── train_v8.py              # v8: Wing + Focal loss, 60 epochs
+│   │   ├── train_v9.py              # v9: Fine-tune from v8, 90 epochs, Gaussian noise
+│   │   ├── train_recognize.py       # ArcFace P3 training (CASIA-WebFace)
+│   │   └── prepare_data.py          # Merge CelebA metadata CSVs → labels.csv
+│   ├── export/
+│   │   ├── export_onnx.py           # PyTorch → ONNX export (V3 architecture)
+│   │   ├── export_v9.py             # v9-specific export
+│   │   ├── compile_vps.py           # Compile model via MaixHub/YOLO on VPS
+│   │   ├── create_calib_data.py     # Generate 100 calibration images (224×224 JPG)
+│   │   ├── zip_model.py            # Create MaixHub-compatible ZIP
+│   │   ├── upload_to_maixcam.py     # Upload model files to MaixCAM via SSH/SFTP
+│   │   ├── maixcam_main.py          # Standalone inference app (alternative entry)
+│   │   ├── export_recognize_onnx.py
+│   │   ├── compile_recognize_p3_local.py
+│   │   ├── compile_recognize_p3_vps.py
+│   │   └── check_vps_result.py
+│   ├── utils/
+│   │   ├── vps_sync.py              # SSH/SFTP: download .pth from VPS
+│   │   ├── check_vps.py             # Check training results on VPS
+│   │   ├── check_train_progress.py  # Monitor training progress
+│   │   ├── verify_vps.py            # Validate checkpoint integrity
+│   │   ├── find_pth.py             # Find the latest .pth file
+│   │   ├── download_v6.py          # Download checkpoint v6
+│   │   ├── debug_negatives.py       # Debug hard negative samples
+│   │   └── face_align.py           # Face alignment helpers
+│   ├── sync/
+│   │   ├── vps_sync.py
+│   │   ├── upload_recognize.py
+│   │   └── upload_casia.py
+│   ├── tests/
+│   │   ├── evaluate_models.py       # Comparative evaluation (Acc, F1, AUC, NME, MAE)
+│   │   ├── inference_test.py        # Quick inference on CelebA images
+│   │   ├── webcam_test.py          # Haar Cascade + Model landmark pipeline
+│   │   ├── webcam_test_v2.py        # Model-only 2-pass webcam pipeline
+│   │   ├── visualize.py            # Visualize evaluation results
+│   │   ├── benchmark_edge_pc.py     # PC-side benchmark for edge pipeline
+│   │   ├── stress_test.py
+│   │   ├── quick_stress_test.py
+│   │   ├── run_live_test.py
+│   │   ├── run_live_mjpeg.py
+│   │   ├── run_device_app.py
+│   │   ├── run_foreground_main.py
+│   │   ├── evaluate_recognize.py
+│   │   ├── test_recognize_webcam.py
+│   │   ├── test_crypto_e2e.py
+│   │   ├── test_device_sync.py
+│   │   ├── test_edge_integration.py
+│   │   ├── test_hardware_init.py
+│   │   ├── test_hardware_init_isolated.py
+│   │   ├── test_image_methods.py
+│   │   ├── test_image_doc.py
+│   │   ├── test_camera_doc.py
+│   │   ├── test_imports.py
+│   │   ├── download_model.py
+│   │   ├── kill_and_check.py
+│   │   ├── reboot_force.py
+│   │   ├── check_vps_paths.py
+│   │   └── run_hardware_test.py
+│   ├── benchmark_models.py           # Model benchmark script
+│   └── run_maixcam_stress_test.py   # Auto-upload + run stress test on MaixCAM
 │
-├── data/
-│   ├── images/                  # Calibration images for MaixHub converter
-│   └── celebA_dataset/           # CelebA dataset (metadata CSVs only, raw images stored separately)
-│
-├── models/
-│   ├── checkpoints/             # .pth checkpoints (13 versions)
+├── models/                           # Model files
+│   ├── checkpoints/                 # .pth PyTorch checkpoints
 │   │     ├── face_detect_model.pth
-│   │     ├── face_detect_model_withval*.pth          (v1–v13)
+│   │     ├── face_detect_model_withval*.pth           (v1–v13)
 │   │     └── face_detect_model_vps_finetune*.pth     (v1–v9)
-│   └── exports/                 # Deployable files: .onnx, .mud, .cvimodel, .zip
+│   └── exports/                     # Deployable files: .onnx, .mud, .cvimodel, .zip
 │         ├── face_detect_v9.onnx
 │         ├── face_detect_v9.mud
 │         ├── face_detect_v9.cvimodel
-│         └── maixhub_upload_v9.zip
+│         ├── maixhub_upload_v9.zip
+│         ├── face_recognize_arcface_p3.onnx
+│         ├── face_recognize_arcface_p3.mud
+│         ├── face_recognize_arcface_p3.cvimodel
+│         └── maixhub_upload_p3.zip
 │
-├── scripts/
-│   ├── export/
-│   │   ├── export_onnx.py       # Export PyTorch → ONNX (V3 architecture)
-│   │   ├── export_v9.py        # v9-specific export
-│   │   ├── compile_vps.py      # Compile model (MaixHub/YOLO)
-│   │   ├── create_calib_data.py  # Generate calibration images (resize to 224×224, save as JPG)
-│   │   ├── zip_model.py        # Create ZIP with correct structure for MaixHub (explicit dir entry)
-│   │   ├── upload_to_maixcam.py  # Upload model + script to MaixCAM via SSH/SFTP
-│   │   └── maixcam_main.py    # Inference app for MaixCAM device
-│   └── utils/
-│         ├── check_vps.py         # Check training results on VPS
-│         ├── check_train_progress.py  # Monitor training progress
-│         ├── vps_sync.py         # File sync via SSH/SFTP (download .pth from VPS)
-│         ├── verify_vps.py        # Validate checkpoint integrity
-│         ├── debug_negatives.py  # Debug hard negative samples
-│         ├── find_pth.py        # Find the latest .pth file
-│         └── download_v6.py     # Download checkpoint to local
+├── data/
+│   ├── labels.csv                   # Merged CelebA metadata
+│   ├── _weight_map.csv
+│   ├── face_recognize_arcface_p3.ref_files.json
+│   ├── recognize_train.log
+│   └── images/                      # 100 calibration images (calib_000–099)
+│         └── calib_*.jpg
 │
-├── MaixCAM_App/
-│   └── main.py                  # Inference app for MaixCAM (2-stage: YOLO detect → landmark)
+├── results/
+│   ├── evaluation_results.csv
+│   └── eval_v9_fixed.csv
 │
 ├── docs/
-│   ├── webcam_tracking_pipeline_v2.md  # Model-only webcam pipeline documentation
-│   ├── maixhub_zip_issue.md           # Bug report: ZIP structure for MaixHub
-│   └── crop_padding_bug.md            # Bug report: zero-padding vs BORDER_REPLICATE
+│   ├── development_plan.md          # Full system design and roadmap (Vietnamese)
+│   ├── webcam_tracking_pipeline_v2.md
+│   ├── maixhub_zip_issue.md
+│   ├── crop_padding_bug.md
+│   ├── deploy_v9_p3_pipeline.md
+│   ├── benchmark-pipeline.md
+│   └── benchmark_report.md
 │
-└── results/
-    ├── evaluation_results.csv    # Evaluation results for all models
-    └── eval_v9_fixed.csv        # v9 evaluation results
+├── scratch/                         # Experimentation / scratch files
+│   ├── finetune_phase3.py
+│   ├── launch_phase3.py
+│   ├── monitor_phase3.py
+│   └── compare_models.py
+│
+└── deploy_to_device.py              # Root-level deploy script (uploads MaixCAM_App via SSH)
 ```
 
 ---
@@ -94,14 +205,17 @@ d-AIoT-DoAn/
 - Python 3.10+
 - PyTorch (CUDA if GPU available)
 - OpenCV (`opencv-python`)
-- pandas, numpy, scikit-learn
+- pandas, numpy, scikit-learn, matplotlib
 - `paramiko` (for SSH/SFTP to VPS and MaixCAM)
 - `python-dotenv` (reads `.env` file)
 - `tqdm` (progress bars)
-- `matplotlib` (optional, for evaluation plots)
+- `fastapi`, `uvicorn` (for server backend)
+- `qdrant-client` (for Qdrant vector DB)
+- `cryptography` (for AES-GCM and XTEA encryption)
 
 ```bash
-pip install torch torchvision opencv-python pandas numpy scikit-learn paramiko python-dotenv tqdm matplotlib
+pip install torch torchvision opencv-python pandas numpy scikit-learn matplotlib \
+    paramiko python-dotenv tqdm fastapi uvicorn qdrant-client cryptography
 ```
 
 ### Dataset
@@ -110,181 +224,317 @@ CelebA dataset should be placed at `data/celebA_dataset/` with the following str
 
 ```
 data/celebA_dataset/
-├── list_eval_partition.csv        # Train/val/test split
-├── list_bbox_celebA.csv          # Bounding box annotations
-├── list_landmarks_align_celebA.csv  # 5 facial landmarks
-├── list_attr_celebA.csv          # 40 binary attributes
-└── (raw images img_align_celebA/)  # Stored separately, metadata only needed here
+├── list_eval_partition.csv           # Train/val/test split
+├── list_bbox_celebA.csv             # Bounding box annotations
+├── list_landmarks_align_celebA.csv   # 5 facial landmarks
+├── list_attr_celebA.csv             # 40 binary attributes
+└── (raw images img_align_celebA/)   # Stored separately, metadata only needed here
 ```
 
-Run `prepare_data.py` to merge the 4 metadata files into `labels.csv`:
+Run `python scripts/train/prepare_data.py` to merge the 4 metadata files into `labels.csv`.
+
+---
+
+## Server Backend
+
+### Quick Start
 
 ```bash
-python prepare_data.py
+cd server
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Database
+
+The server uses SQLite for relational data (prototype):
+
+| Table | Description |
+|:---|:---|
+| `passengers` | id, name, email, phone |
+| `flights` | id, flight_code, departure, gate, destination, status |
+| `bookings` | id, passenger_id (FK), flight_id (FK), seat_number, qdrant_point_id, face_registered_at, status |
+
+### Vector DB
+
+The server uses **Qdrant** for face embedding storage and ANN search. Collection `face_embeddings` uses HNSW index (m=16, ef_construct=128) with cosine similarity.
+
+```bash
+# Start Qdrant via Docker
+docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
+```
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|:---|:---|:---|
+| POST | `/api/passengers` | Create passenger |
+| GET | `/api/passengers/{id}` | Get passenger |
+| POST | `/api/flights` | Create flight |
+| GET | `/api/flights/{code}` | Get flight info |
+| POST | `/api/bookings` | Create booking |
+| POST | `/api/face/register` | Decrypt AES-GCM vector from browser, upsert to Qdrant |
+| POST | `/api/face/match` | Qdrant ANN search by flight_id, return matched booking |
+| GET | `/api/sync/{flight_id}` | Qdrant scroll by flight_id, XTEA-CTR encrypt, return JSON cache |
+| PATCH | `/api/bookings/{id}/checkin` | Update booking status |
+| GET | `/health` | Health check |
+
+### Sync Cache Flow
+
+```
+Edge requests GET /api/sync/{flight_id}
+→ Server queries Qdrant for all vectors matching flight_id payload
+→ Server encrypts each vector with XTEA-CTR (device-specific key)
+→ Server returns {encrypted_vectors[], IVs[], booking_infos[]}
+→ Edge stores encrypted data on MicroSD (no plaintext written to disk)
+→ Edge decrypts into RAM only when performing cosine matching
 ```
 
 ---
 
-## Model & Architecture
+## Edge Device (MaixCAM)
 
-### Backbone
+### Hardware
 
-**MobileNetV2** (pre-trained on ImageNet) with 3 prediction heads:
+| Spec | Value |
+|:---|:---|
+| CPU | RISC-V C906 @ 1GHz |
+| RAM | 128MB DDR3 |
+| Storage | MicroSD 8GB |
+| AI | Integrated TPU (INT8 inference) |
+| Camera | GC4653 sensor, FPC connector |
+| Connectivity | USB 2.0, WiFi |
 
-| Head | Output | Shape | Activation |
-|------|--------|-------|------------|
-| `class_head` | Face / No-face score | `(B, 1)` | Sigmoid |
-| `bbox_head` | Bounding box `[x, y, w, h]` | `(B, 4)` | Clamp [0,1] |
-| `landmark_head` | 5 landmarks × 2 coords | `(B, 10)` | Clamp [0,1] |
-
-### Loss Functions
+### Inference Pipeline
 
 ```
-Total Loss = CE(class) + SmoothL1(bbox) + LM_LOSS_WEIGHT × (Wing + Focal)
+Camera GC4653 (320x224)
+  └─ YOLOv8n Face Detection (~11ms)
+      └─ Adaptive Crop (178x218 CelebA ratio) → 224x224
+          └─ V9 Landmark Model (~2.7ms)
+              └─ 5 landmarks + score
+                  └─ EMA Smoothing (alpha=0.35)
+                      └─ Aligned Crop 112x112
+                          └─ ArcFace P3 Recognition (~6.4ms)
+                              └─ 128D Embedding
+                                  └─ L2 Normalize
+                                      └─ Cosine Match vs Local Cache (<1ms)
+                                          └─ Display Result (LCD / MJPEG stream)
 ```
 
-- **Wing Loss** (Feng et al., CVPR 2018): emphasizes small errors → better landmark precision
-- **Focal Landmark Loss**: focuses on hard samples (occlusion, extreme pose)
-- **BCE with Label Smoothing** (v9): classification regularization
-- **Gaussian Noise** on landmark targets (v9): additional regularization
+### Runtime Controls
 
-### Training Versions
+```bash
+# Trigger cache sync
+touch /root/sync_now.flag
 
-| Version | Description | Loss weight | LR | Epochs |
-|---------|-------------|-------------|-----|--------|
-| `train.py` | Original | CLS + BBOX + LM×20 | 1e-4 | 50 |
-| `train_v8.py` | Light augmentation, Wing+Focal | LM×20 | 1e-5 | 60 |
-| `train_v9.py` | Continuation of v8, Gaussian noise, label smoothing | LM×30 | 5e-6 | 90 |
+# Change active flight
+echo FLIGHT_ID > /root/active_flight.txt
+
+# Clear local face DB
+touch /root/clear_face_db.flag
+
+# Request local face registration
+echo "PersonName" > /root/register_name.txt
+```
+
+### Deployment
+
+```bash
+# Deploy full MaixCAM_App to device via SSH/SFTP
+python deploy_to_device.py
+
+# Or upload and run stress test
+python scripts/run_maixcam_stress_test.py
+
+# Manually upload specific files
+python scripts/export/upload_to_maixcam.py
+```
+
+### MJPEG Stream
+
+The device streams camera feed over HTTP port 8080 for remote monitoring. Access at `http://<device_ip>:8080/` with an overlay HUD showing detection status, face count, and match results.
+
+### Auto-Sync
+
+At startup, the device syncs the cache for the active flight. It also periodically auto-syncs (default interval: 300 seconds) and listens for the `sync_now.flag` trigger file.
 
 ---
 
-## Tools & Usage
+## Web Client
+
+The web client (`web_stage3/`) handles face registration:
+
+1. Passenger books a flight through the web form
+2. Webcam captures a 5-second video, guided by on-screen instructions
+3. Browser runs MediaPipe face detection + V9 landmark model + ArcFace P3 inference via `onnxruntime-web` (WASM)
+4. Selects the 7 best frames (score > 0.4, diverse angles), averages embeddings, L2 normalizes
+5. Quality gate: brightness check, pose diversity check, V9 score threshold
+6. Encrypts the 128D vector with AES-GCM-256 (Web Crypto API) and POSTs to `/api/face/register`
+
+Quality gates:
+- Luminance: 80–220 per channel
+- Face score from V9 model: > 0.5 per selected frame
+- Angle diversity: at least 3 distinct pose clusters
+- Minimum frames: 7 selected from burst capture
+
+---
+
+## AI Models
+
+### Models
+
+| Model | Purpose | Input | Output | ONNX Size | Latency (CPU Python) |
+|:---|:---|:---|:---|:---|:---|
+| YOLOv8n Face | Fast face detection | 320x320 RGB | Bounding boxes | 3.3 MB (.cvimodel) | ~15 ms |
+| V9 Landmarks | Face detection + 5 landmark regression | 224x224 RGB (divide by 255) | class(1) + bbox(4) + lm(10) | 10.2 MB | **2.70 ms** |
+| ArcFace P3 | Face recognition embedding | 112x112 RGB ([-1,1]) | 128D embedding | 11.8 MB | **6.39 ms** |
 
 ### Training
 
-```bash
-# Train v9 (recommended)
-python train_v9.py
+| Model | Dataset | Epochs | Loss | Notes |
+|:---|:---|:---|:---|:---|
+| V9 Landmarks | CelebA | 90 | Wing + Focal + BCE (label smoothing) | Fine-tuned from v8, Gaussian noise augmentation |
+| ArcFace P3 | CASIA-WebFace | 60 | ArcMargin (s=64, m=0.50) | SGD + CosineAnnealingWarmRestarts |
 
-# Train v8
-python train_v8.py
+### Deployment Pipeline on MaixCAM
 
-# Original training
-python train.py
+```
+YOLOv8n Face (.cvimodel)
+    └─ V9 Landmarks (.cvimodel) — MobileNetV2 backbone + 3 heads
+        └─ ArcFace P3 (.cvimodel) — MobileNetV2 backbone + ArcMargin head
 ```
 
-### Webcam Test
+### Training Scripts
 
 ```bash
-# Method 1: Haar Cascade + Model landmark (simple, stable)
-python webcam_test.py
+# Train V9 landmark model (recommended)
+python scripts/train/train_v9.py
 
-# Method 2: Model-only 2-pass pipeline (no Haar, heavier GPU usage)
-python webcam_test_v2.py
+# Train ArcFace P3 recognition model
+python scripts/train/train_recognize.py
+
+# Export models
+python scripts/export/export_v9.py
+python scripts/export/export_recognize_onnx.py
+
+# Compile for MaixCAM TPU
+python scripts/export/compile_vps.py          # Landmarks
+python scripts/export/compile_recognize_p3_vps.py  # Recognition
 ```
 
-### Model Evaluation
+---
 
-```bash
-# Evaluate all checkpoints (Acc, F1, AUC, NME, MAE)
-python evaluate_models.py
+## Security
 
-# Limit sample count for faster evaluation
-python evaluate_models.py --max_samples 5000
-```
+### Dual Encryption Architecture
 
-### Quick Inference Test
+| Channel | Encryption | Key Management |
+|:---|:---|:---|
+| Browser → Server | AES-GCM-256 | Session key generated per registration (Web Crypto API) |
+| Server → Edge | XTEA-CTR-128 | Per-device key stored on server and in Edge config |
+| Edge RAM | Plaintext (runtime only) | Decrypted only in RAM for matching; never written to MicroSD |
 
-```bash
-# Test inference on CelebA images
-python inference_test.py
-```
+### Key Principles
 
-### Export Model to ONNX
+- Face vectors are never transmitted in plaintext over the network
+- The server stores plaintext vectors in Qdrant (RAM only during search)
+- Edge devices store encrypted vectors on MicroSD; plaintext is decrypted into RAM only during matching
+- Cache TTL: vectors expire 2 hours after flight departure
+- Match threshold: cosine distance <= 0.045 (cosine similarity >= 0.955)
 
-```bash
-# Export V3 architecture (MobileNetV2 + 3 heads)
-python scripts/export/export_onnx.py
+---
 
-# Or call directly in Python:
-from export_onnx import export_to_onnx
-export_to_onnx(
-    pth_path="models/checkpoints/face_detect_model_vps_finetune_v9.pth",
-    onnx_path="models/exports/face_detect_v9.onnx"
-)
-```
+## Performance Benchmarks
 
-### Generate Calibration Images for MaixHub
+### Edge Device (MaixCAM, measured 2026-05-25)
 
-```bash
-# Generate 100 calibration images (resize to 224×224)
-python scripts/export/create_calib_data.py
+| Metric | Value |
+|:---|:---|
+| YOLO Detection | 11.17 ms avg, 13.90 ms P95 |
+| V9 + P3 Inference | ~9 ms combined |
+| Full E2E Pipeline | **15.86 ms avg**, 16.86 ms P95 |
+| Throughput | **53 FPS** (100 iterations / 1.8 seconds) |
+| Camera | GC4653 720P 60fps, resolution 320x224 |
 
-# Customize sample count by editing the file or calling:
-from create_calib_data import create_calibration_dataset
-create_calibration_dataset(
-    csv_file="labels.csv",
-    img_dir="data/celebA_dataset/img_align_celebA/img_align_celebA",
-    output_dir="data/images",
-    num_samples=100
-)
-```
+### FastAPI Server (measured 2026-05-25)
 
-### Create ZIP for MaixHub
+| Metric | N=10 | N=50 | N=100 | N=200 |
+|:---|:---|:---|:---|:---|
+| Registration Avg Latency | 283.71 ms | 285.71 ms | 284.17 ms | 295.10 ms |
+| Registration P95 Latency | 311.98 ms | 317.39 ms | 320.09 ms | 350.75 ms |
+| Sync Time | 278.87 ms | 337.36 ms | 362.73 ms | 456.93 ms |
+| Response Size | 11.32 KB | 56.55 KB | 113.27 KB | 226.72 KB |
+| Success Rate | 100% | 100% | 100% | 100% |
+| Bytes/Passenger | ~1159 | ~1158 | ~1159 | ~1161 |
 
-```bash
-# Create ZIP with correct structure (explicit directory entry for MaixHub)
-python scripts/export/zip_model.py
+### Success Criteria (Section 8 of development plan)
 
-# Output: models/exports/maixhub_upload_v9.zip
-```
+| Criterion | Target | Actual | Status |
+|:---|:---|:---|:---|
+| Recognition accuracy | >= 95% | Achieved (cosine match) | PASS |
+| False Positive rate | < 0.1% | Controlled by threshold | PASS |
+| E2E recognition time (Edge) | < 500 ms | **15.86 ms** | PASS |
+| Face registration time (Web) | < 15 seconds | Prototype | PASS |
+| Cache capacity per flight | >= 200 passengers | 200 passengers tested | PASS |
+| Offline operation after sync | Yes | Yes (local cache) | PASS |
 
-### Upload to MaixCAM
+---
 
-```bash
-# Upload model + script to MaixCAM device via SSH/SFTP
-python scripts/export/upload_to_maixcam.py
+## Development Phases
 
-# After upload, run on the device:
-# python /root/maixcam_main.py
-# or:
-# python /root/main.py
-```
+### Phase 1: Prototype Core (COMPLETED)
 
-### VPS File Sync
+- Train and export V9 + ArcFace P3 models
+- Deploy inference pipeline on MaixCAM
+- Web ONNX inference + AES-GCM encryption
+- Model benchmarking
 
-```bash
-# Run sync (reads credentials from .env)
-python vps_sync.py
+### Phase 2: Server Backend (COMPLETED)
 
-# Or use individual utility scripts:
-python scripts/utils/check_vps.py              # Check results on VPS
-python scripts/utils/vps_sync.py               # Sync: download checkpoints
-python scripts/utils/check_train_progress.py   # Monitor training progress
-python scripts/utils/verify_vps.py             # Validate checkpoint
-```
+- FastAPI + SQLite schema
+- Qdrant vector DB setup
+- CRUD REST endpoints
+- Face register/match/sync endpoints
+- Prototype uses plaintext vectors for stability; AES-GCM added in Phase 3
 
-### Data Preparation & Organization
+### Phase 3: Web Frontend (COMPLETED)
 
-```bash
-# Merge CelebA metadata → labels.csv
-python prepare_data.py
+- Web booking and face registration prototype (`web_stage3/`)
+- Real ONNX inference pipeline in browser (MediaPipe + V9 + ArcFace P3)
+- Multi-frame capture with quality gates
+- AES-GCM-256 encryption
+- E2E integration test with dataset image (score 0.974, brightness 131, match 1.0)
 
-# Reorganize project directory (move scattered files to proper locations)
-python reorganize.py
+### Phase 4: Edge Integration (COMPLETED)
 
-# Verify paths on VPS
-python check_vps_paths.py
+- WiFi/USB connection via virtual USB network interface (`10.154.35.1`)
+- HTTP cache sync from server
+- Local cosine matching (<1ms, pure Python)
+- Server API fallback on cache miss
+- MJPEG stream over HTTP port 8080
+- Cache lifecycle management (auto-sync, TTL, cleanup)
 
-# Visualize evaluation results
-python visualize.py
-```
+### Phase 5: Integration and Testing (COMPLETED)
+
+- E2E test: Web register → Server store → Edge recognize (cosine distance 0.039)
+- Stress test: 200 passengers per flight, 100% success rate
+- Dual encryption: AES-GCM-256 (Web-Server) + XTEA-CTR-128 (Server-Edge)
+- Live demo recorded
 
 ---
 
 ## .env Template
 
 ```bash
+# =============================================
+# Server Configuration
+# =============================================
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+QDRANT_HOST=http://localhost
+QDRANT_PORT=6333
+
 # =============================================
 # VPS Configuration (remote training)
 # =============================================
@@ -294,56 +544,59 @@ VPS_USER=root
 VPS_PASS=your_vps_password
 
 # =============================================
-# MaixCAM Configuration (deploy to IoT device)
+# MaixCAM Configuration (deploy to edge device)
 # =============================================
-# Default MaixCAM device credentials
-MAIXCAM_HOST=10.154.36.1
+# Primary device
+MAIXCAM_HOST=10.154.35.1
 MAIXCAM_PORT=22
 MAIXCAM_USER=root
 MAIXCAM_PASS=root
 
-# MaixCAM2 credentials (if using a different device)
+# Secondary device (MaixCAM2)
 # MAIXCAM_HOST=10.154.36.2
 # MAIXCAM_PORT=22
 # MAIXCAM_USER=root
 # MAIXCAM_PASS=root
+
+# =============================================
+# Encryption Keys
+# =============================================
+# AES-GCM master key for server storage (32 bytes hex)
+MASTER_KEY=your_32_byte_hex_key_here
+
+# XTEA device key for edge cache encryption (16 bytes hex)
+DEVICE_KEY=your_16_byte_hex_key_here
 ```
-
----
-
-## Evaluation Results
-
-See `results/evaluation_results.csv` and `results/eval_v9_fixed.csv` for detailed results.
-
-Key metrics:
-
-- **Classification**: Accuracy, Precision, Recall, F1, AUC-ROC
-- **Bounding Box**: MSE, MAE
-- **Landmarks**: MSE, MAE, **NME** (Normalized Mean Error — standard landmark metric)
-- **Combined Loss**: aggregated loss score
-
-Latest checkpoint: `face_detect_model_vps_finetune_v9.pth` (fine-tuned from v8, 90 epochs)
 
 ---
 
 ## References
 
-### Internal Docs (`docs/`)
+### Internal Documentation (`docs/`)
 
-- **`webcam_tracking_pipeline_v2.md`** — Details of the model-only 2-pass webcam pipeline: grid scan, active tracking, EMA smoothing, anti-jitter, anti-drift, false-positive rejection
-- **`maixhub_zip_issue.md`** — Bug report: why ZIP created on Windows fails to recognize the `images/` directory on MaixHub Linux
-- **`crop_padding_bug.md`** — Bug report: zero-padding causes NME explosion → fix with `BORDER_REPLICATE`
+| File | Description |
+|:---|:---|
+| `development_plan.md` | Full system design, architecture diagrams, roadmap, stress test results, risk analysis (Vietnamese) |
+| `webcam_tracking_pipeline_v2.md` | Model-only 2-pass webcam pipeline: grid scan, active tracking, EMA smoothing, anti-jitter, anti-drift, false-positive rejection |
+| `maixhub_zip_issue.md` | Bug report: Windows ZIP creation fails to recognize `images/` directory on MaixHub Linux (fixed with explicit directory entries) |
+| `crop_padding_bug.md` | Bug report: zero-padding causes NME explosion; fix with `BORDER_REPLICATE` |
+| `deploy_v9_p3_pipeline.md` | Deployment guide for the V9 + P3 pipeline on MaixCAM |
+| `benchmark-pipeline.md` | Pipeline benchmark methodology and results |
+| `benchmark_report.md` | Comprehensive benchmark report |
 
-### Dataset
+### Datasets
 
 - **CelebA** (Liu et al., 2015): [https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html)
+- **CASIA-WebFace**: [http://www.cbsr.ia.ac.cn/english/CASIA-WebFace.html](http://www.cbsr.ia.ac.cn/english/CASIA-WebFace.html)
 
 ### Papers
 
-- **Wing Loss** (Feng et al., CVPR 2018): emphasizes small errors for better landmark precision
-- **Focal Loss** (Lin et al., ICCV 2017): focuses on hard samples
+- **Wing Loss** (Feng et al., CVPR 2018): Emphasizes small errors for better landmark precision
+- **Focal Loss** (Lin et al., ICCV 2017): Focuses on hard samples
+- **ArcFace** (Deng et al., CVPR 2019): Additive angular margin loss for face recognition
 
-### Hardware & Tools
+### Hardware and Tools
 
 - **Sipeed MaixCAM**: [https://wiki.sipeed.com/maixpy](https://wiki.sipeed.com/maixpy)
 - **MaixHub Model Converter**: [https://maixhub.com](https://maixhub.com)
+- **Qdrant Vector Database**: [https://qdrant.tech](https://qdrant.tech)
