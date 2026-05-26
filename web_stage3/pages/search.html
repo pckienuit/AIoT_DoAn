@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kết quả tìm kiếm — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/search.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <!-- Page header -->
+        <div class="page__header">
+          <div class="eyebrow">Kết quả tìm kiếm</div>
+          <h1 id="searchTitle">Chuyến bay</h1>
+          <p id="searchMeta" class="text-muted"></p>
+        </div>
+
+        <!-- Filter / sort bar -->
+        <div class="filter-bar">
+          <span class="filter-bar__label" id="resultCount">Đang tải…</span>
+          <div class="filter-bar__sort">
+            <select id="sortSelect" aria-label="Sắp xếp theo">
+              <option value="price">Giá: thấp → cao</option>
+              <option value="time">Giờ khởi hành</option>
+              <option value="duration">Thời gian bay</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div id="flightResults" class="flight-results">
+          <div class="empty-state" id="loadingState">
+            <div class="skeleton" style="width:100%;height:120px;"></div>
+            <div class="skeleton" style="width:100%;height:120px;"></div>
+            <div class="skeleton" style="width:100%;height:120px;"></div>
+          </div>
+          <div class="empty-state is-hidden" id="emptyState">
+            <svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>
+            <h3>Không tìm thấy chuyến bay</h3>
+            <p>Không có chuyến bay nào phù hợp với tìm kiếm của bạn. Vui lòng thử ngày hoặc tuyến khác.</p>
+            <a href="/" class="btn btn--primary">Quay lại tìm kiếm</a>
+          </div>
+          <div id="flightList"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiSearchFlights } from "../js/api.js";
+    import { createFlightCard } from "../js/components/flight-card.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { saveBookingFlow, clearStaleFlow } from "../js/storage.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const params = new URLSearchParams(location.search);
+    const origin      = params.get("origin") || "";
+    const destination = params.get("destination") || "";
+    const date       = params.get("date") || params.get("flight_date") || "";
+    const passengers = parseInt(params.get("passengers") || "1");
+
+    document.getElementById("searchTitle").textContent =
+      `${origin} → ${destination}`;
+    document.getElementById("searchMeta").textContent =
+      `${date ? new Date(date).toLocaleDateString("vi-VN", { weekday:"long", day:"numeric", month:"long", year:"numeric" }) : ""} · ${passengers} hành khách`;
+
+    let allFlights = [];
+
+    async function loadFlights() {
+      try {
+        allFlights = await apiSearchFlights({ origin, destination, date, passengers });
+      } catch {
+        allFlights = [];
+      }
+      renderFlights(allFlights);
+    }
+
+    function renderFlights(flights) {
+      document.getElementById("loadingState").classList.add("is-hidden");
+      document.getElementById("resultCount").textContent =
+        `${flights.length} chuyến bay`;
+
+      if (!flights.length) {
+        document.getElementById("emptyState").classList.remove("is-hidden");
+        return;
+      }
+      document.getElementById("emptyState").classList.add("is-hidden");
+
+      const listEl = document.getElementById("flightList");
+      listEl.innerHTML = flights.map(f => createFlightCard(f)).join("");
+
+      // Attach click handlers
+      listEl.querySelectorAll(".flight-card").forEach((card, i) => {
+        card.addEventListener("click", (e) => {
+          // Don't navigate if clicking the "Chọn" button
+          if (e.target.closest("button")) return;
+          const flight = flights[i];
+          saveBookingFlow({ flight, passengers });
+          navigate(`/booking?flight=${flight.id}`);
+        });
+
+        card.querySelector("button")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const flight = flights[i];
+          saveBookingFlow({ flight, passengers });
+          navigate(`/booking?flight=${flight.id}`);
+        });
+      });
+    }
+
+    // Sort handler
+    document.getElementById("sortSelect").addEventListener("change", (e) => {
+      const key = e.target.value;
+      const sorted = [...allFlights].sort((a, b) => {
+        if (key === "price")   return (a.price_per_person || 0) - (b.price_per_person || 0);
+        if (key === "time")    return String(a.departure_time || "").localeCompare(String(b.departure_time || ""));
+        if (key === "duration") return (a.duration_minutes || 0) - (b.duration_minutes || 0);
+        return 0;
+      });
+      renderFlights(sorted);
+    });
+
+    loadFlights();
+  </script>
+</body>
+</html>

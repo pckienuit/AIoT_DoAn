@@ -1,0 +1,277 @@
+/* ==========================================================================
+   MY TICKETS / CONFIRMATION PAGE
+   ========================================================================== */
+
+.ticket-list { display: grid; gap: var(--sp-4); }
+
+.ticket-card {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+  transition: border-color var(--t-base);
+}
+
+.ticket-card:hover { border-color: var(--line-2); }
+
+.ticket-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+.ticket-card__route {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.ticket-card__route-codes {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.ticket-card__route-arrow {
+  color: var(--muted);
+  font-size: var(--text-xl);
+}
+
+.ticket-card__flight-num {
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xs);
+  margin-top: 2px;
+}
+
+.ticket-card__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  align-items: center;
+}
+
+.ticket-card__field { display: flex; flex-direction: column; gap: 4px; }
+.ticket-card__field-label {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: "JetBrains Mono", monospace;
+}
+.ticket-card__field-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.ticket-card__seat {
+  font-size: var(--text-3xl) !important;
+  color: var(--signal);
+  font-weight: 700 !important;
+  letter-spacing: -0.04em;
+}
+
+.ticket-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+/* --- QR code placeholder --- */
+.booking-qr {
+  width: 100px;
+  height: 100px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+/* --- Confirmation page --- */
+.confirmation-hero {
+  text-align: center;
+  padding: var(--sp-12) var(--sp-6);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  margin-bottom: var(--sp-6);
+}
+
+.confirmation-hero__icon {
+  width: 80px;
+  height: 80px;
+  background: var(--ok-dim);
+  border: 2px solid var(--ok);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  margin: 0 auto var(--sp-5);
+  font-size: 2.5rem;
+  color: var(--ok);
+}
+
+.confirmation-hero__title {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  margin-bottom: var(--sp-3);
+}
+
+.confirmation-hero__sub {
+  color: var(--muted);
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* --- Ticket (confirmation page) --- */
+.ticket {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.ticket__header {
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--signal);
+  color: #120900;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ticket__header h3 {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-lg);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #120900;
+  margin: 0;
+}
+
+.ticket__body {
+  padding: var(--sp-6);
+}
+
+.ticket__route {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--sp-6);
+  padding-bottom: var(--sp-6);
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: var(--sp-6);
+}
+
+.ticket__airport { text-align: center; }
+.ticket__airport-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+.ticket__airport-city {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  margin-top: 2px;
+}
+.ticket__time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: var(--sp-2);
+}
+
+.ticket__arrow {
+  color: var(--signal);
+  font-size: 2rem;
+  text-align: center;
+}
+
+.ticket__details {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.ticket__field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.ticket__field:last-child { border-bottom: none; }
+
+.ticket__field-label {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-family: "JetBrains Mono", monospace;
+}
+.ticket__field-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+.ticket__field--highlight .ticket__field-value {
+  font-size: var(--text-xl);
+}
+
+.ticket__footer {
+  padding: var(--sp-5) var(--sp-6);
+  border-top: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+
+/* --- Next steps sidebar --- */
+.next-step {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+}
+.next-step__num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--signal);
+  color: #120900;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.next-step__title {
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+
+/* --- Empty state --- */
+.empty-state {
+  text-align: center;
+  padding: var(--sp-12) var(--sp-6);
+  border: 1px dashed var(--border);
+}
+.empty-state__icon {
+  font-size: 3rem;
+  margin-bottom: var(--sp-4);
+  opacity: 0.3;
+}
+
+@media (max-width: 680px) {
+  .ticket-card__body { grid-template-columns: 1fr 1fr; }
+  .ticket-card__actions { grid-column: 1 / -1; align-items: stretch; }
+  .ticket__route { grid-template-columns: 1fr auto 1fr; gap: var(--sp-3); }
+  .ticket__airport-code { font-size: var(--text-2xl); }
+}

@@ -41,16 +41,16 @@ def build_face_payload(booking: dict[str, Any]) -> dict[str, Any]:
     return {
         "booking_id": booking["id"],
         "booking_code": booking["booking_code"],
-        "passenger_id": booking["passenger_id"],
         "passenger_name": booking["passenger_name"],
-        "passenger_email": booking["passenger_email"],
+        "passenger_email": booking.get("passenger_email"),
         "flight_id": booking["flight_id"],
-        "flight_code": booking["flight_code"],
-        "destination": booking["destination"],
-        "gate": booking["gate"],
-        "seat_number": booking["seat_number"],
-        "departure_time": booking["departure_time"],
-        "boarding_time": booking["boarding_time"],
+        "flight_number": booking["flight_number"],
+        "flight_date": booking["flight_date"],
+        "origin_city": booking["origin_city"],
+        "dest_city": booking["dest_city"],
+        "seat_number": booking.get("seat_number"),
+        "departure_time": booking.get("departure_time"),
+        "arrival_time": booking.get("arrival_time"),
         "flight_status": booking["flight_status"],
     }
 
@@ -79,14 +79,16 @@ def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
     face_payload = build_face_payload(booking)
     upsert_face_embedding(point_id, vector, face_payload)
 
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
             """
             UPDATE bookings
-            SET qdrant_point_id = ?, face_registered_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            SET qdrant_point_id = ?, face_registered_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (point_id, payload.booking_id),
+            (point_id, now, now, payload.booking_id),
         )
 
     updated_booking = get_booking(payload.booking_id)

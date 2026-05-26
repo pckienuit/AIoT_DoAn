@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Check-in bằng khuôn mặt — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/checkin.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Xác thực khuôn mặt</div>
+          <h1>Check-in tự động</h1>
+          <p class="text-muted">Đưa khuôn mặt vào khung để xác thực và hoàn tất check-in.</p>
+        </div>
+
+        <div class="checkin-layout">
+          <!-- Camera panel -->
+          <div class="checkin-camera">
+            <div class="checkin-camera__header">
+              <span class="mono font-bold">Camera xác thực</span>
+              <span id="cameraStatus" class="text-xs text-muted">Chưa khởi động</span>
+            </div>
+
+            <div class="checkin-camera__view" id="cameraView">
+              <video id="cameraVideo" autoplay muted playsinline></video>
+              <canvas id="cameraCanvas"></canvas>
+              <div class="checkin-camera__overlay">
+                <div class="checkin-camera__frame"></div>
+              </div>
+            </div>
+
+            <div class="checkin-camera__controls">
+              <!-- Steps -->
+              <div class="checkin-camera__steps">
+                <div class="checkin-camera__step" id="stepCamera">
+                  <div class="checkin-camera__step-icon">1</div>
+                  <div>
+                    <div class="checkin-camera__step-label">Khởi động camera</div>
+                    <div class="checkin-camera__step-desc" id="stepCameraDesc">Bật camera trên thiết bị</div>
+                  </div>
+                </div>
+                <div class="checkin-camera__step" id="stepCapture">
+                  <div class="checkin-camera__step-icon">2</div>
+                  <div>
+                    <div class="checkin-camera__step-label">Chụp khuôn mặt</div>
+                    <div class="checkin-camera__step-desc" id="stepCaptureDesc">Đưa mặt vào khung hình</div>
+                  </div>
+                </div>
+                <div class="checkin-camera__step" id="stepVerify">
+                  <div class="checkin-camera__step-icon">3</div>
+                  <div>
+                    <div class="checkin-camera__step-label">Xác thực</div>
+                    <div class="checkin-camera__step-desc" id="stepVerifyDesc">So khớp với dữ liệu đã đăng ký</div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="captureFeedback" class="alert" style="display:none;"></div>
+
+              <div style="display:flex;gap:var(--sp-3);">
+                <button id="startCameraBtn" class="btn btn--primary">
+                  Bật camera
+                </button>
+                <button id="captureBtn" class="btn btn--accent" disabled>
+                  Chụp &amp; Xác thực
+                </button>
+              </div>
+
+              <div style="display:flex;gap:var(--sp-3);">
+                <a href="/my-tickets" class="btn btn--ghost btn--sm">← Quay lại</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Result panel -->
+          <aside class="checkin-result" id="checkinResult">
+            <div class="checkin-result__card">
+              <div class="checkin-result__header">
+                <h3 class="mono">Kết quả xác thực</h3>
+              </div>
+              <div class="checkin-result__body">
+                <div id="resultContent">
+                  <div style="text-align:center;padding:var(--sp-6);color:var(--muted);">
+                    <div style="font-size:2rem;margin-bottom:var(--sp-3);">◈</div>
+                    <p>Chưa có kết quả.<br/>Bật camera và chụp khuôn mặt để xác thực.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { FaceCapture } from "../js/components/face-capture.js";
+    import { apiGetBooking, apiCheckin, apiFaceMatch } from "../js/api.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearStaleFlow } from "../js/storage.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const bookingCode = new URLSearchParams(location.search).get("booking");
+
+    if (!bookingCode) {
+      alert("Không tìm thấy mã booking.");
+      navigate("/my-tickets");
+    }
+
+    // Booking info display
+    let booking = null;
+
+    async function loadBooking() {
+      try {
+        booking = await apiGetBooking(bookingCode);
+        document.getElementById("resultContent").innerHTML = buildBookingInfo(booking);
+      } catch {
+        document.getElementById("resultContent").innerHTML = `
+          <div class="alert alert--error">
+            <strong>Không tìm thấy booking.</strong> Vui lòng kiểm tra mã vé.
+          </div>`;
+      }
+    }
+
+    function buildBookingInfo(b) {
+      const statusBadge = {
+        confirmed: `<span class="badge badge--ok">Đã xác nhận</span>`,
+        checked_in: `<span class="badge badge--accent">Đã check-in</span>`,
+        cancelled: `<span class="badge badge--danger">Đã hủy</span>`,
+      }[b.status] || `<span class="badge badge--muted">${b.status}</span>`;
+
+      return `
+        <div style="display:grid;gap:var(--sp-4);">
+          <div style="text-align:center;">
+            <div class="mono text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;">Mã đặt chỗ</div>
+            <div class="booking-code" style="font-size:1.4rem;">${b.booking_code}</div>
+          </div>
+          <hr style="border-color:var(--border);" />
+          <div style="display:grid;gap:var(--sp-2);">
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Chuyến bay</span>
+              <span class="mono font-bold">${b.flight_number}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Hành khách</span>
+              <span>${b.passenger_name || b.user_name}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Ghế</span>
+              <span class="mono">${b.seat_number || "—"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Trạng thái</span>
+              ${statusBadge}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // Face capture
+    const faceCapture = new FaceCapture({
+      onStatus: (msg) => {
+        document.getElementById("cameraStatus").textContent = msg;
+      },
+      onEmbedding: (emb) => {
+        document.getElementById("stepCaptureDesc").textContent = "Đã chụp frame";
+      },
+    });
+
+    // Camera
+    const video = document.getElementById("cameraVideo");
+
+    document.getElementById("startCameraBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("startCameraBtn");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang bật…`;
+
+      try {
+        await faceCapture.startCamera(video);
+        document.getElementById("stepCamera").classList.add("is-done");
+        document.getElementById("stepCameraDesc").textContent = "Camera đã bật";
+        document.getElementById("cameraStatus").textContent = "Camera đang hoạt động";
+        document.getElementById("captureBtn").disabled = false;
+        btn.textContent = "Camera đang bật";
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Thử lại";
+        document.getElementById("captureFeedback").className = "alert alert--error";
+        document.getElementById("captureFeedback").textContent = "Không thể truy cập camera: " + err.message;
+        document.getElementById("captureFeedback").style.display = "block";
+      }
+    });
+
+    document.getElementById("captureBtn").addEventListener("click", async () => {
+      if (!booking) return;
+
+      const btn = document.getElementById("captureBtn");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang xác thực…`;
+
+      try {
+        // Extract embedding
+        const result = await faceCapture.extractEmbeddingFromSource(video);
+        document.getElementById("stepCapture").classList.add("is-done");
+        document.getElementById("stepCaptureDesc").textContent = `Chất lượng: ${Math.round(result.quality * 100)}%`;
+        document.getElementById("stepVerify").classList.add("is-active");
+        document.getElementById("stepVerifyDesc").textContent = "Đang so khớp…";
+
+        // Match against stored embeddings
+        const matchResult = await apiFaceMatch(booking.flight_id, result.embedding);
+
+        if (matchResult.matched) {
+          document.getElementById("stepVerify").classList.remove("is-active");
+          document.getElementById("stepVerify").classList.add("is-done");
+          document.getElementById("stepVerifyDesc").textContent = "Xác thực thành công";
+
+          const score = Math.round((1 - matchResult.distance) * 100);
+          const scoreClass = score < 70 ? "checkin-result__score--low" : score < 85 ? "checkin-result__score--low" : "";
+          const scoreIcon = score >= 85 ? "✓" : score >= 70 ? "!" : "✗";
+
+          document.getElementById("resultContent").innerHTML = `
+            <div class="checkin-result__match">
+              <div style="font-size:3rem;color:var(--ok);">${scoreIcon}</div>
+              <div class="checkin-result__score ${scoreClass}">${score}<span style="font-size:1.5rem;">%</span></div>
+              <div class="checkin-result__score-label">Độ khớp</div>
+              <p style="color:var(--ok);font-weight:600;">Xác thực thành công</p>
+              <p class="text-xs text-muted">Khoảng cách: ${matchResult.distance.toFixed(4)}</p>
+              <button id="confirmCheckinBtn" class="btn btn--primary btn--lg" style="width:100%;margin-top:var(--sp-3);">
+                Xác nhận Check-in
+              </button>
+            </div>`;
+
+          document.getElementById("confirmCheckinBtn")?.addEventListener("click", async () => {
+            await doCheckin(booking.id);
+          });
+        } else {
+          document.getElementById("stepVerify").classList.remove("is-active");
+          document.getElementById("stepVerify").classList.add("is-done");
+          document.getElementById("stepVerifyDesc").textContent = "Không tìm thấy khuôn mặt";
+          document.getElementById("resultContent").innerHTML = `
+            <div class="checkin-result__match">
+              <div style="font-size:3rem;color:var(--danger);">✗</div>
+              <p style="color:var(--danger);font-weight:600;">Không khớp khuôn mặt</p>
+              <p class="text-xs text-muted" style="margin-top:var(--sp-2);">
+                Vui lòng đảm bảo khuôn mặt đã được đăng ký khi đặt vé và thử lại.
+              </p>
+              <button class="btn btn--ghost" onclick="location.reload()" style="margin-top:var(--sp-4);">
+                Thử lại
+              </button>
+            </div>`;
+        }
+      } catch (err) {
+        document.getElementById("captureFeedback").className = "alert alert--error";
+        document.getElementById("captureFeedback").textContent = "Lỗi: " + err.message;
+        document.getElementById("captureFeedback").style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Chụp & Xác thực";
+      }
+    });
+
+    async function doCheckin(bookingId) {
+      const btn = document.getElementById("confirmCheckinBtn");
+      if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Đang xử lý…`; }
+      try {
+        await apiCheckin(bookingId);
+        document.getElementById("resultContent").innerHTML = `
+          <div class="checkin-result__match">
+            <div style="font-size:3rem;color:var(--ok);">✓</div>
+            <p style="color:var(--ok);font-weight:700;font-size:1.1rem;">Check-in thành công!</p>
+            <p class="text-sm text-muted" style="margin-top:var(--sp-2);">Cảm ơn bạn đã check-in. Chúc bạn có chuyến đi tốt đẹp!</p>
+            <a href="/my-tickets" class="btn btn--primary" style="margin-top:var(--sp-4);">Xem vé của tôi</a>
+          </div>`;
+      } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = "Xác nhận Check-in"; }
+        document.getElementById("captureFeedback").className = "alert alert--error";
+        document.getElementById("captureFeedback").textContent = "Lỗi check-in: " + err.message;
+        document.getElementById("captureFeedback").style.display = "block";
+      }
+    }
+
+    loadBooking();
+  </script>
+</body>
+</html>

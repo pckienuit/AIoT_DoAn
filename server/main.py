@@ -1,27 +1,36 @@
+"""FastAPI application entry point."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
-from server.database import DB_PATH, init_db, iter_tables
+from server.database import DB_PATH, init_db, iter_tables, USE_MYSQL
 from server.face_routes import router as face_router
-from server.routes import router as api_router
+from server.routes import register_routes
 from server.vector_service import ensure_face_collection, get_vector_status
+
 
 app = FastAPI(
     title="AIoT Flight Face Lookup API",
-    version="0.1.0",
-    description="Prototype backend for flight information lookup via face recognition.",
+    version="0.2.0",
+    description="Airline booking system with face-recognition check-in.",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    # Allow localhost dev + any LAN IP (covers Edge device at 10.154.35.x)
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(api_router)
+
+# Register all routers
+register_routes(app)
 app.include_router(face_router)
+
+# Mount static web files (at / so relative ../css/ paths work)
+WEB_ROOT = Path(__file__).resolve().parent.parent / "web_stage3"
+app.mount("/", StaticFiles(directory=str(WEB_ROOT), html=True), name="static")
 
 
 @app.on_event("startup")
@@ -30,20 +39,21 @@ def startup() -> None:
 
 
 @app.get("/health")
-def health_check() -> dict[str, object]:
+def health_check() -> dict:
     tables = list(iter_tables())
     return {
         "status": "ok",
-        "service": "flight-face-api",
+        "service": "aiot-flight-api",
+        "db_type": "mysql" if USE_MYSQL else "sqlite",
         "database": {
-            "path": str(DB_PATH),
+            "path": str(DB_PATH) if not USE_MYSQL else "mysql",
             "tables": tables,
         },
     }
 
 
 @app.post("/health/vector")
-def vector_health_check() -> dict[str, object]:
+def vector_health_check() -> dict:
     created = ensure_face_collection()
     status = get_vector_status()
     return {"status": "ok", "created": created, "vector": status}

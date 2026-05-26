@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chọn ghế — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/seat-map.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Bước 3 / 4</div>
+          <h1>Chọn ghế</h1>
+          <p class="text-muted" id="flightInfo">Đang tải thông tin chuyến bay…</p>
+        </div>
+
+        <div class="page__grid page__grid--sidebar">
+          <!-- Seat map -->
+          <div class="panel">
+            <div class="panel__header">
+              <span class="step-badge">A</span>
+              <div>
+                <h2>Sơ đồ ghế</h2>
+                <p>Click vào ghế trống để chọn. Ghế extra legroom có phụ thu.</p>
+              </div>
+            </div>
+            <div class="panel__body">
+              <div class="seat-map-container" id="seatMapContainer"></div>
+            </div>
+          </div>
+
+          <!-- Sidebar summary -->
+          <div class="seat-summary panel">
+            <div class="panel__header">
+              <span class="step-badge">B</span>
+              <div>
+                <h2>Tóm tắt</h2>
+                <p>Thông tin chuyến bay và thanh toán.</p>
+              </div>
+            </div>
+            <div class="panel__body" id="seatSummary">
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Chuyến bay</span>
+                <span class="seat-summary__value" id="summaryFlight">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Hành khách</span>
+                <span class="seat-summary__value" id="summaryPassenger">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Ghế đã chọn</span>
+                <span class="seat-summary__value text-signal" id="summarySeat">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Phụ thu ghế</span>
+                <span class="seat-summary__value" id="summarySurcharge">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Giá vé</span>
+                <span class="seat-summary__value" id="summaryPrice">—</span>
+              </div>
+              <div class="seat-summary__total">
+                <span class="seat-summary__total-label">Tổng cộng</span>
+                <span class="seat-summary__total-value" id="summaryTotal">—</span>
+              </div>
+            </div>
+            <div class="panel__footer" style="flex-direction:column;gap:8px;">
+              <button class="btn btn--primary btn--full btn--lg" id="confirmSeatBtn" disabled>
+                Xác nhận ghế & thanh toán
+              </button>
+              <a href="/booking" class="btn btn--ghost btn--full">← Quay lại</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner"><span>© 2026 AIoT Flight</span></div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetFlight, apiGetFlightSeats } from "../js/api.js";
+    import { createSeatPicker } from "../js/components/seat-picker.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
+    import { formatVND } from "../js/components/flight-card.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const flow = getBookingFlow();
+    const bookingCode = new URLSearchParams(location.search).get("booking");
+    const flightIdParam = new URLSearchParams(location.search).get("flight");
+
+    let flight = flow.flight || null;
+
+    if (bookingCode && !flight) {
+      try {
+        const { apiGetBooking } = await import("../js/api.js");
+        const booking = await apiGetBooking(bookingCode);
+        saveBookingFlow({ ...flow, bookingCode, booking });
+        flight = await apiGetFlight(booking.flight_id);
+        saveBookingFlow({ ...flow, flight, bookingCode, booking });
+      } catch {
+        navigate("/");
+        return;
+      }
+    }
+
+    const flightId = flightIdParam || flight?.id;
+    if (!flightId) { navigate("/"); return; }
+
+    let seats = [];
+    let selectedSeats = [];
+    let extraSurcharge = 0;
+
+    async function init() {
+      if (!flight) {
+        try { flight = await apiGetFlight(flightId); } catch { navigate("/"); return; }
+      }
+      try { seats = (await apiGetFlightSeats(flightId)).seats; } catch { seats = []; }
+
+      document.getElementById("flightInfo").textContent =
+        `${flight.flight_number || ""} · ${flight.origin_code || ""} → ${flight.dest_code || ""} · ${flight.flight_date || ""}`;
+      document.getElementById("summaryFlight").textContent = `${flight.flight_number || ""} · ${flight.origin_code || ""} → ${flight.dest_code || ""}`;
+      document.getElementById("summaryPassenger").textContent = flow.passengerName || flow.passengers + " khách";
+      updateSummary();
+
+      const mapEl = document.getElementById("seatMapContainer");
+      const picker = createSeatPicker({
+        container: mapEl,
+        seats,
+        onSelect: (sel) => {
+          selectedSeats = sel;
+          updateSummary();
+          document.getElementById("confirmSeatBtn").disabled = sel.length === 0;
+        },
+      });
+      picker.mount(mapEl);
+    }
+
+    function updateSummary() {
+      const seat = selectedSeats[0] || "—";
+      document.getElementById("summarySeat").textContent = seat;
+
+      let surcharge = 0;
+      if (seat !== "—") {
+        const seatData = seats.find(s => s.seat === seat);
+        surcharge = seatData?.surcharge || 0;
+      }
+      extraSurcharge = surcharge;
+      document.getElementById("summarySurcharge").textContent = surcharge > 0 ? formatVND(surcharge) : "—";
+
+      const basePrice = flight?.base_price || 0;
+      const passengers = flow.passengers || 1;
+      const price = basePrice * passengers;
+      document.getElementById("summaryPrice").textContent = formatVND(price);
+
+      const total = price + surcharge;
+      document.getElementById("summaryTotal").textContent = formatVND(total);
+    }
+
+    document.getElementById("confirmSeatBtn").addEventListener("click", () => {
+      if (!selectedSeats.length) return;
+      saveBookingFlow({ ...flow, seatNumber: selectedSeats[0], extraSurcharge });
+      navigate(`/payment?flight=${flightId}`);
+    });
+
+    init();
+  </script>
+</body>
+</html>
