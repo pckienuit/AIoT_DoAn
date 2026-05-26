@@ -1,7 +1,7 @@
 # Kế Hoạch Phát Triển Hệ Thống Tra Cứu Thông Tin Chuyến Bay Qua Nhận Diện Khuôn Mặt
 
-> **Đồ án AIoT** — Tích hợp AI thị giác trên phần cứng biên RISC-V  
-> Cập nhật: 2026-05-23
+> **Đồ án AIoT** — Tích hợp AI thị giác trên phần cứng biên RISC-V
+> Cập nhật: 2026-05-25
 
 ---
 
@@ -348,16 +348,34 @@ sequenceDiagram
 
 > **Cập nhật 2026-05-24:** Đã triển khai giải pháp stream MJPEG thay thế cho màn hình LCD vật lý giúp người dùng giám sát và kiểm tra trực tiếp từ máy tính chủ mà không cần phần cứng hiển thị LCD chuyên dụng. Đã tích hợp time.sleep(0.005) chống nghẽn CPU và mất kết nối USB.
 
-### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần) 🟢 80%
+### Giai đoạn 5: Tích Hợp & Kiểm Thử (1 tuần) 🟢 100%
 
 | # | Task | Output / Kết quả | Trạng thái |
 |:--|:---|:---|:---|
 | 5.1 | End-to-end test: Web đăng ký → Server lưu → Edge nhận diện | Kiểm thử liên thông toàn chuỗi thành công, nhận diện khớp khoảng cách cosine `0.039`. | ✅ Xong |
-| 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | Đo đạc độ trễ khi nạp số lượng lớn bản ghi cục bộ. | ⬜ Chưa bắt đầu |
+| 5.2 | Stress test: 50+ hành khách, đo latency toàn trình | **Edge (MaixCAM):** YOLO 11.17ms avg, E2E 15.86ms avg, 53 FPS, 100 iters/1.8s. **Server:** 100% reg success, ~285ms avg latency. **Script:** `MaixCAM_App/stress_test_maixcam.py` + `scripts/run_maixcam_stress_test.py`. | ✅ Xong |
 | 5.3 | Kiểm thử bảo mật: sniff traffic, verify encryption | AES-GCM-256 (Web -> Server) và XTEA-CTR-128 (Server <-> Edge) bảo mật hoàn toàn. | ✅ Xong |
 | 5.4 | Demo video + poster đồ án | Đã ghi hình và lưu trữ demo động tại [maixcam_live_feed](maixcam_live_feed_1779604313240.webp). | ✅ Xong |
 
 > **Cập nhật 2026-05-24 (Bảo mật & Mã hóa):** Đã tích hợp thành công hệ thống mã hóa kép (Dual-Cipher):
+
+> **Cập nhật 2026-05-25 (Stress Test):** Đo hiệu năng thực tế trên MaixCAM và Server:
+>
+> **MaixCAM Edge Device:**
+> - YOLO Detection: **11.17ms avg**, 13.90ms P95
+> - Pipeline E2E: **15.86ms avg**, 16.86ms P95 — cực nhanh!
+> - Throughput: **53 FPS** (100 iterations / 1.8s)
+> - Camera: GC4653 720P 60fps, resolution 320x224
+>
+> **FastAPI Server:**
+> - Registration: 100% success rate với 10/50/100/200 passengers
+> - Latency: **~285ms avg**, P95 ~320-350ms
+> - Sync throughput: 226.72 KB cho 200 passengers trong <500ms
+>
+> **Files:**
+> - `MaixCAM_App/stress_test_maixcam.py` — stress test trên thiết bị biên
+> - `scripts/run_maixcam_stress_test.py` — upload & run tự động qua SSH
+> - `scripts/tests/benchmark_edge_pc.py` — benchmark mô phỏng trên PC
 > 1. Trình duyệt mã hóa vector bằng AES-GCM-256 (sử dụng Web Crypto API) trước khi gửi lên FastAPI Server qua endpoint `/api/face/register`.
 > 2. FastAPI Server giải mã và lưu trữ tạm thời trong RAM, sau đó lập chỉ mục vector plaintext trên Qdrant DB.
 > 3. Khi đồng bộ cache về Edge qua endpoint `/api/sync/{flight_id}`, server mã hóa on-the-fly bằng XTEA-CTR (128-bit) với khóa thiết bị duy nhất.
@@ -458,7 +476,7 @@ project-root/
 
 ### 9.3 Phuong Phap
 
-**Script**: scripts/tests/quick_stress_test.py
+**Script**: scripts/run_maixcam_stress_test.py (tự động upload + chạy trên MaixCAM)
 
 `
 Luong test moi batch:

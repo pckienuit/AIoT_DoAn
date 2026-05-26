@@ -42,7 +42,9 @@ FACE_DB_PATH = "/root/face_db.json"
 REGISTER_REQUEST_PATH = "/root/register_name.txt"
 CLEAR_DB_FLAG_PATH = "/root/clear_face_db.flag"
 
-if sys.device_name().lower() == "maixcam2":
+import platform
+IS_MAIXCAM2 = platform.machine() == "rv1126"
+if IS_MAIXCAM2:
     FACE_DET = nn.YOLO11(model=MODEL_DIR + "/yolo11s_face.mud", dual_buff=False)
 else:
     FACE_DET = nn.YOLOv8(model=MODEL_DIR + "/yolov8n_face.mud", dual_buff=False)

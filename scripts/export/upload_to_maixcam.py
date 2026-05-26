@@ -14,7 +14,7 @@ import os
 
 import paramiko
 
-MAIXCAM_HOST = os.getenv("MAIXCAM_HOST", "10.154.36.1")
+MAIXCAM_HOST = os.getenv("MAIXCAM_HOST", "10.154.35.1")
 MAIXCAM_PORT = int(os.getenv("MAIXCAM_PORT", "22"))
 MAIXCAM_USER = os.getenv("MAIXCAM_USER", "root")
 MAIXCAM_PASS = os.getenv("MAIXCAM_PASS", "root")
