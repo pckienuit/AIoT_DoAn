@@ -21,11 +21,10 @@ function addRoute(route) {
 
 function navigate(path, replace = false) {
   if (replace) {
-    history.replaceState(null, "", path);
-  } else {
-    history.pushState(null, "", path);
+    window.location.replace(path);
+    return;
   }
-  _handleRoute();
+  window.location.assign(path);
 }
 
 function _handleRoute() {

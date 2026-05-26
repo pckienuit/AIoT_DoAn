@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -28,9 +29,18 @@ app.add_middleware(
 register_routes(app)
 app.include_router(face_router)
 
-# Mount static web files (at / so relative ../css/ paths work)
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_stage3"
-app.mount("/", StaticFiles(directory=str(WEB_ROOT), html=True), name="static")
+PAGE_ROUTES = {
+    "/login": "login.html",
+    "/register": "register.html",
+    "/search": "search.html",
+    "/booking": "booking.html",
+    "/seat-map": "seat-map.html",
+    "/payment": "payment.html",
+    "/confirmation": "confirmation.html",
+    "/my-tickets": "my-tickets.html",
+    "/checkin": "checkin.html",
+}
 
 
 @app.on_event("startup")
@@ -57,3 +67,21 @@ def vector_health_check() -> dict:
     created = ensure_face_collection()
     status = get_vector_status()
     return {"status": "ok", "created": created, "vector": status}
+
+
+@app.get("/")
+def web_home() -> FileResponse:
+    return FileResponse(WEB_ROOT / "index.html")
+
+
+@app.get("/{page}", include_in_schema=False)
+def web_page(page: str) -> FileResponse:
+    route = f"/{page}"
+    filename = PAGE_ROUTES.get(route)
+    if filename:
+        return FileResponse(WEB_ROOT / "pages" / filename)
+    return FileResponse(WEB_ROOT / "index.html")
+
+
+# Mount static assets after API and page routes so app URLs are not swallowed.
+app.mount("/", StaticFiles(directory=str(WEB_ROOT), html=True), name="static")

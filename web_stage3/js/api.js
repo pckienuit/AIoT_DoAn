@@ -2,8 +2,8 @@
  * api.js — Centralized API client with JWT auth headers.
  */
 const API_BASE = (() => {
-  // Allow override via env
-  return window.__API_BASE__ || "http://127.0.0.1:8012";
+  // Allow override, otherwise call the same FastAPI origin that serves the web.
+  return window.__API_BASE__ || window.location.origin;
 })();
 
 // ---------------------------------------------------------------------------
@@ -226,3 +226,33 @@ function formatDateTime(dt) {
   if (!dt) return "—";
   return formatDate(dt) + " · " + formatTime(dt);
 }
+
+export {
+  apiRequest,
+  apiRegister,
+  apiLogin,
+  apiGetMe,
+  apiUpdateMe,
+  apiGetAirports,
+  apiSearchFlights,
+  apiGetFlight,
+  apiGetFlightSeats,
+  apiCreateBooking,
+  apiGetMyBookings,
+  apiGetBooking,
+  apiCancelBooking,
+  apiChangeSeat,
+  apiCheckin,
+  apiInitPayment,
+  apiPaymentCallback,
+  apiPaymentStatus,
+  apiFaceRegister,
+  apiFaceMatch,
+  apiSyncFlight,
+  apiHealth,
+  apiVectorHealth,
+  formatVND,
+  formatDate,
+  formatTime,
+  formatDateTime,
+};

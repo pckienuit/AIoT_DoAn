@@ -341,14 +341,14 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
 @router.post("/bookings", status_code=201)
 def create_booking(
     payload: BookingCreate,
-    user: Annotated[dict, Depends(get_current_user)] | None = None,
+    user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     flight = get_flight(payload.flight_id)
     if flight["available_seats"] <= 0:
         raise HTTPException(status_code=409, detail="No seats available on this flight")
 
     code = _generate_booking_code()
-    uid = int(user["sub"]) if user else None
+    uid = int(user["sub"])
     total = payload.total_price or flight.get("price_per_person", 0)
 
     with get_connection() as conn:
