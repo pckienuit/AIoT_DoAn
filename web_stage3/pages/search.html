@@ -117,14 +117,14 @@
           if (e.target.closest("button")) return;
           const flight = flights[i];
           saveBookingFlow({ flight, passengers });
-          navigate(`/booking?flight=${flight.id}`);
+          navigate(`/seat-map?flight=${flight.id}`);
         });
 
         card.querySelector("button")?.addEventListener("click", (e) => {
           e.stopPropagation();
           const flight = flights[i];
           saveBookingFlow({ flight, passengers });
-          navigate(`/booking?flight=${flight.id}`);
+          navigate(`/seat-map?flight=${flight.id}`);
         });
       });
     }

@@ -92,7 +92,7 @@
 
   <script type="module">
     import { render } from "../js/components/nav.js";
-    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats } from "../js/api.js";
+    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats, apiChangeSeat } from "../js/api.js";
     import { createSeatPicker } from "../js/components/seat-picker.js";
     import { navigate } from "../js/router.js";
     import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
@@ -213,7 +213,7 @@
 
       const btn = document.getElementById("confirmSeatBtn");
       btn.disabled = true;
-      btn.innerHTML = `<span class="spinner"></span> Đang tạo booking...`;
+      btn.innerHTML = `<span class="spinner"></span> Đang xử lý...`;
 
       const passengers = flow.passengers || 1;
       const ticketCount = Math.max(passengers, selectedSeats.length);
@@ -221,30 +221,34 @@
       const totalPrice = (flight?.base_price || 0) * ticketCount + extraSurcharge;
 
       try {
-        const booking = await apiCreateBooking({
-          flight_id: Number(flightId),
-          passenger_name: flow.passengerName || "Hành khách",
-          passenger_email: flow.passengerEmail || "",
-          passenger_phone: flow.passengerPhone || "",
-          seat_number: seatNumber,
-          total_price: totalPrice,
-        });
-
-        saveBookingFlow({
-          ...flow,
-          seatNumber,
-          seatNumbers: selectedSeats,
-          passengers: ticketCount,
-          extraSurcharge,
-          bookingId: booking.id,
-          bookingCode: booking.booking_code,
-          booking,
-        });
-        navigate(`/payment?booking=${booking.booking_code}`);
+        if (bookingCode && flow.booking) {
+          // Changing seat of an existing booking
+          await apiChangeSeat(flow.booking.id, seatNumber);
+          // Update flow booking seat
+          const updatedBooking = { ...flow.booking, seat_number: seatNumber };
+          saveBookingFlow({
+            ...flow,
+            seatNumber,
+            seatNumbers: selectedSeats,
+            booking: updatedBooking
+          });
+          navigate(`/payment?booking=${bookingCode}`);
+        } else {
+          // New booking flow: just save to storage and navigate to payment
+          saveBookingFlow({
+            ...flow,
+            seatNumber,
+            seatNumbers: selectedSeats,
+            passengers: ticketCount,
+            extraSurcharge,
+            totalPrice
+          });
+          navigate("/payment");
+        }
       } catch (err) {
         btn.disabled = false;
         btn.textContent = "Xác nhận ghế & thanh toán";
-        showSeatMapError(`Không tạo được booking: ${err.message}`);
+        showSeatMapError(`Lỗi xử lý ghế: ${err.message}`);
       }
     });
 
