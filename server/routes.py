@@ -311,9 +311,8 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
         row_label = str(r)
         for c in range(1, cols_count + 1):
             seat_label = f"{row_label}{chr(64 + c)}"
-            col_letter = chr(64 + c)
             status = "booked" if seat_label in booked_seats else "available"
-            extra = col_letter in extra_cols
+            extra = c in extra_cols
             surcharge = 150000 if extra else 0
             seats.append({
                 "seat": seat_label,

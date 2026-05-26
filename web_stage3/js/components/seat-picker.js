@@ -41,9 +41,12 @@ function createSeatPicker({ container, seats = [], onSelect, selectedSeats = [] 
     if (!_container) return;
 
     const { rows, cols, aisleAfter } = getLayout(_seats);
-    const colLetters = Array.from({ length: cols }, (_, i) =>
-      `<span>${String.fromCharCode(65 + i)}</span>`
-    ).join("");
+    const columns = [];
+    for (let c = 1; c <= cols; c++) {
+      if (c === aisleAfter + 1 && aisleAfter > 0) columns.push({ type: "aisle" });
+      columns.push({ type: "seat", label: String.fromCharCode(64 + c) });
+    }
+    const gridTemplate = `40px ${columns.map(col => col.type === "aisle" ? "32px" : "minmax(44px, 1fr)").join(" ")}`;
 
     // Build rows
     const rowsData = [];
@@ -63,7 +66,6 @@ function createSeatPicker({ container, seats = [], onSelect, selectedSeats = [] 
 
         if (seat) {
           const status = getSeatStatus(seat);
-          const color = getSeatColor(seat);
           const extra = seat.extra_legroom ? " seat--extra" : "";
           const booked = status === "booked" ? " seat--booked" : "";
           const selected = status === "selected" ? " seat--selected" : "";
@@ -84,7 +86,7 @@ function createSeatPicker({ container, seats = [], onSelect, selectedSeats = [] 
       }
 
       return `
-        <div class="seat-map__row">
+        <div class="seat-map__row" style="grid-template-columns:${gridTemplate};">
           <div class="seat-map__row-label">${rowNum}</div>
           <div class="seat-map__row-seats">${cells.join("")}</div>
         </div>`;
@@ -109,9 +111,9 @@ function createSeatPicker({ container, seats = [], onSelect, selectedSeats = [] 
 
         <div class="seat-map__plane-nose">Cửa ra máy bay ↑</div>
 
-        <div class="seat-map__header">
+        <div class="seat-map__header" style="grid-template-columns:${gridTemplate};">
           <span></span>
-          ${colLetters.split("").map(c => `<span>${c}</span>`).join("")}
+          ${columns.map(col => `<span>${col.type === "aisle" ? "" : col.label}</span>`).join("")}
         </div>
 
         ${seatEls}

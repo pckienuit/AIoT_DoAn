@@ -95,11 +95,9 @@
     import { apiGetFlight, apiGetFlightSeats } from "../js/api.js";
     import { createSeatPicker } from "../js/components/seat-picker.js";
     import { navigate } from "../js/router.js";
-    import { registerRoutes } from "../js/routes.js";
     import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
     import { formatVND } from "../js/components/flight-card.js";
 
-    registerRoutes();
     clearStaleFlow();
     render();
 
@@ -118,22 +116,45 @@
         saveBookingFlow({ ...flow, flight, bookingCode, booking });
       } catch {
         navigate("/");
-        return;
+        throw new Error("Unable to load booking for seat map");
       }
     }
 
     const flightId = flightIdParam || flight?.id;
-    if (!flightId) { navigate("/"); return; }
+    if (!flightId) {
+      navigate("/");
+      throw new Error("Missing flight id for seat map");
+    }
 
     let seats = [];
     let selectedSeats = [];
     let extraSurcharge = 0;
 
     async function init() {
+      const mapEl = document.getElementById("seatMapContainer");
+      mapEl.innerHTML = `<div class="alert alert--info">Đang tải sơ đồ ghế...</div>`;
+
       if (!flight) {
-        try { flight = await apiGetFlight(flightId); } catch { navigate("/"); return; }
+        try {
+          flight = await apiGetFlight(flightId);
+        } catch (err) {
+          showSeatMapError(`Không tải được thông tin chuyến bay: ${err.message}`);
+          return;
+        }
       }
-      try { seats = (await apiGetFlightSeats(flightId)).seats; } catch { seats = []; }
+
+      try {
+        const seatResponse = await apiGetFlightSeats(flightId);
+        seats = Array.isArray(seatResponse?.seats) ? seatResponse.seats : [];
+      } catch (err) {
+        showSeatMapError(`Không tải được sơ đồ ghế: ${err.message}`);
+        return;
+      }
+
+      if (!seats.length) {
+        showSeatMapError("Chuyến bay này chưa có dữ liệu ghế.");
+        return;
+      }
 
       document.getElementById("flightInfo").textContent =
         `${flight.flight_number || ""} · ${flight.origin_code || ""} → ${flight.dest_code || ""} · ${flight.flight_date || ""}`;
@@ -141,7 +162,6 @@
       document.getElementById("summaryPassenger").textContent = flow.passengerName || flow.passengers + " khách";
       updateSummary();
 
-      const mapEl = document.getElementById("seatMapContainer");
       const picker = createSeatPicker({
         container: mapEl,
         seats,
@@ -152,6 +172,12 @@
         },
       });
       picker.mount(mapEl);
+    }
+
+    function showSeatMapError(message) {
+      document.getElementById("flightInfo").textContent = "Không thể tải sơ đồ ghế";
+      document.getElementById("seatMapContainer").innerHTML =
+        `<div class="alert alert--error"><strong>Lỗi:</strong> ${message}</div>`;
     }
 
     function updateSummary() {
