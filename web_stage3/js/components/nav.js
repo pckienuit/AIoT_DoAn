@@ -8,8 +8,8 @@ import { navigate } from "../router.js";
 
 const NAV_LINKS = [
   { href: "/", label: "Trang chủ", icon: "⌂" },
+  { href: "/lookup", label: "Tra cứu vé", icon: "🔍" },
   { href: "/my-tickets", label: "Vé của tôi", icon: "⊞", auth: true },
-  { href: "/checkin", label: "Check-in", icon: "◈", auth: true },
 ];
 
 function render() {
@@ -35,7 +35,6 @@ function render() {
               ${user.full_name || user.email}
             </div>
             <a href="/my-tickets" class="nav__dropdown-item">⊞ Vé của tôi</a>
-            <a href="/checkin" class="nav__dropdown-item">◈ Check-in</a>
             <button class="nav__dropdown-item nav__dropdown-item--danger" id="navLogoutBtn">
               ⏻ Đăng xuất
             </button>

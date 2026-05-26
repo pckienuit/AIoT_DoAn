@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from server.auth import create_access_token, get_current_user, hash_password, verify_password
+from server.auth import create_access_token, get_current_user, get_optional_user, hash_password, verify_password
 from server.database import get_connection, row_to_dict
 
 
@@ -345,7 +345,7 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
 @router.post("/bookings", status_code=201)
 def create_booking(
     payload: BookingCreate,
-    user: Annotated[dict, Depends(get_current_user)],
+    user: Annotated[dict | None, Depends(get_optional_user)] = None,
 ) -> dict[str, Any]:
     flight = get_flight(payload.flight_id)
     requested_seats = [
@@ -359,10 +359,19 @@ def create_booking(
         raise HTTPException(status_code=409, detail="No seats available on this flight")
 
     code = _generate_booking_code()
-    uid = int(user["sub"])
+    uid = int(user["sub"]) if user else None
     total = payload.total_price or flight.get("price_per_person", 0)
 
     with get_connection() as conn:
+        # If guest booking, map to user account if email and phone matches
+        if not uid and payload.passenger_email and payload.passenger_phone:
+            existing_user = conn.execute(
+                "SELECT id FROM users WHERE email = ? AND phone = ?",
+                (payload.passenger_email.strip().lower(), payload.passenger_phone.strip()),
+            ).fetchone()
+            if existing_user:
+                uid = existing_user["id"]
+
         if requested_seats:
             existing = conn.execute(
                 """
@@ -541,13 +550,10 @@ def cancel_booking(
 def change_seat(
     booking_id: int,
     payload: SeatChangeRequest,
-    user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     row = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if row.get("user_id") != int(user["sub"]):
-        raise HTTPException(status_code=403, detail="Not authorized")
     if row["status"] in ("cancelled", "checked_in"):
         raise HTTPException(status_code=409, detail="Cannot change seat in current booking state")
 
@@ -571,13 +577,10 @@ def change_seat(
 @router.patch("/bookings/{booking_id}/checkin")
 def checkin_booking(
     booking_id: int,
-    user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     row = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if row.get("user_id") != int(user["sub"]):
-        raise HTTPException(status_code=403, detail="Not authorized")
     if row["status"] == "checked_in":
         raise HTTPException(status_code=409, detail="Already checked in")
     if row["status"] == "cancelled":
@@ -601,13 +604,10 @@ def checkin_booking(
 @router.post("/payments/init")
 def init_payment(
     payload: PaymentInit,
-    user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     booking = _fetch_one("SELECT * FROM bookings WHERE id = ?", (payload.booking_id,))
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if booking.get("user_id") != int(user["sub"]):
-        raise HTTPException(status_code=403, detail="Not authorized")
     if booking["payment_status"] == "paid":
         raise HTTPException(status_code=409, detail="Already paid")
 
@@ -679,13 +679,10 @@ def payment_callback(
 @router.get("/payments/{booking_id}")
 def get_payment_status(
     booking_id: int,
-    user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     booking = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if booking.get("user_id") != int(user["sub"]):
-        raise HTTPException(status_code=403, detail="Not authorized")
 
     row = _fetch_one(
         "SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC LIMIT 1",

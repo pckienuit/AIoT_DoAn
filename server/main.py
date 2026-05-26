@@ -40,6 +40,7 @@ PAGE_ROUTES = {
     "/confirmation": "confirmation.html",
     "/my-tickets": "my-tickets.html",
     "/checkin": "checkin.html",
+    "/lookup": "lookup.html",
 }
 
 

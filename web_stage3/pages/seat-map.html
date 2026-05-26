@@ -211,12 +211,6 @@
     document.getElementById("confirmSeatBtn").addEventListener("click", async () => {
       if (!selectedSeats.length) return;
 
-      if (!getToken()) {
-        saveBookingFlow({ ...flow, seatNumbers: selectedSeats, seatNumber: selectedSeats.join(", "), extraSurcharge });
-        navigate(`/login?return=${encodeURIComponent(`/seat-map?flight=${flightId}`)}`);
-        return;
-      }
-
       const btn = document.getElementById("confirmSeatBtn");
       btn.disabled = true;
       btn.innerHTML = `<span class="spinner"></span> Đang tạo booking...`;
