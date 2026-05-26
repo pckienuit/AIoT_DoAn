@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "user-codegraph": {
+      "command": "node",
+      "args": ["<path-to-codegraph-mcp-server>"],
+      "env": {}
+    },
+    "user-openvision": {
+      "command": "node",
+      "args": ["<path-to-openvision-mcp-server>"],
+      "env": {}
+    },
+    "user-openfiles": {
+      "command": "node",
+      "args": ["<path-to-openfiles-mcp-server>"],
+      "env": {}
+    },
+    "user-projectscan": {
+      "command": "node",
+      "args": ["<path-to-projectscan-mcp-server>"],
+      "env": {}
+    },
+    "user-projectedit": {
+      "command": "node",
+      "args": ["<path-to-projectedit-mcp-server>"],
+      "env": {}
+    }
+  }
+}
