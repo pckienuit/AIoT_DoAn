@@ -299,7 +299,12 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
         "SELECT seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'",
         (flight_id,),
     )
-    booked_seats = {r["seat_number"] for r in booked}
+    booked_seats = {
+        seat.strip()
+        for row in booked
+        for seat in str(row["seat_number"]).split(",")
+        if seat.strip()
+    }
 
     rows_count = layout.get("rows", 30)
     cols_count = layout.get("cols", 6)
@@ -343,7 +348,14 @@ def create_booking(
     user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     flight = get_flight(payload.flight_id)
-    if flight["available_seats"] <= 0:
+    requested_seats = [
+        seat.strip().upper()
+        for seat in str(payload.seat_number or "").split(",")
+        if seat.strip()
+    ]
+    seats_count = max(1, len(requested_seats))
+
+    if flight["available_seats"] < seats_count:
         raise HTTPException(status_code=409, detail="No seats available on this flight")
 
     code = _generate_booking_code()
@@ -351,6 +363,24 @@ def create_booking(
     total = payload.total_price or flight.get("price_per_person", 0)
 
     with get_connection() as conn:
+        if requested_seats:
+            existing = conn.execute(
+                """
+                SELECT seat_number FROM bookings
+                WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'
+                """,
+                (payload.flight_id,),
+            ).fetchall()
+            taken = {
+                seat.strip().upper()
+                for row in existing
+                for seat in str(row["seat_number"]).split(",")
+                if seat.strip()
+            }
+            conflict = sorted(taken.intersection(requested_seats))
+            if conflict:
+                raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
+
         # Resolve passenger_id: use provided or create from name/email/phone
         passenger_id = payload.passenger_id
         if not passenger_id:
@@ -389,8 +419,8 @@ def create_booking(
 
         # Decrease available seats
         conn.execute(
-            "UPDATE flights SET available_seats = available_seats - 1 WHERE id = ?",
-            (payload.flight_id,),
+            "UPDATE flights SET available_seats = available_seats - ? WHERE id = ?",
+            (seats_count, payload.flight_id),
         )
         conn.commit()
 

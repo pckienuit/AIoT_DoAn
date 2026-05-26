@@ -174,6 +174,11 @@
 
     function renderSummary() {
       const b = booking;
+      const seatList = String(b.seat_number || "")
+        .split(",")
+        .map(seat => seat.trim())
+        .filter(Boolean);
+      const ticketCount = Math.max(1, seatList.length);
       document.getElementById("bookingSummary").innerHTML = `
         <div style="display:grid;gap:var(--sp-3);">
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -197,8 +202,12 @@
             <div>${b.passenger_name || b.user_name || "—"}</div>
           </div>
           <div>
+            <div class="text-xs text-muted">Số vé</div>
+            <div class="mono font-bold">${ticketCount} vé</div>
+          </div>
+          <div>
             <div class="text-xs text-muted">Ghế</div>
-            <div class="mono font-bold">${b.seat_number || "—"}</div>
+            <div class="mono font-bold">${seatList.length ? seatList.join(", ") : "—"}</div>
           </div>
           <hr style="border-color:var(--border);" />
           <div style="display:flex;justify-content:space-between;align-items:center;">

@@ -92,13 +92,15 @@
 
   <script type="module">
     import { render } from "../js/components/nav.js";
-    import { apiGetFlight, apiGetFlightSeats } from "../js/api.js";
+    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats } from "../js/api.js";
     import { createSeatPicker } from "../js/components/seat-picker.js";
     import { navigate } from "../js/router.js";
     import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
+    import { getToken, restoreSession } from "../js/auth.js";
     import { formatVND } from "../js/components/flight-card.js";
 
     clearStaleFlow();
+    await restoreSession();
     render();
 
     const flow = getBookingFlow();
@@ -127,7 +129,9 @@
     }
 
     let seats = [];
-    let selectedSeats = [];
+    let selectedSeats = Array.isArray(flow.seatNumbers)
+      ? [...flow.seatNumbers]
+      : (flow.seatNumber ? [flow.seatNumber] : []);
     let extraSurcharge = 0;
 
     async function init() {
@@ -165,13 +169,16 @@
       const picker = createSeatPicker({
         container: mapEl,
         seats,
+        selectedSeats,
         onSelect: (sel) => {
           selectedSeats = sel;
+          saveBookingFlow({ ...flow, seatNumbers: selectedSeats, seatNumber: selectedSeats.join(", ") });
           updateSummary();
           document.getElementById("confirmSeatBtn").disabled = sel.length === 0;
         },
       });
       picker.mount(mapEl);
+      document.getElementById("confirmSeatBtn").disabled = selectedSeats.length === 0;
     }
 
     function showSeatMapError(message) {
@@ -181,30 +188,70 @@
     }
 
     function updateSummary() {
-      const seat = selectedSeats[0] || "—";
-      document.getElementById("summarySeat").textContent = seat;
+      const seatLabel = selectedSeats.length ? selectedSeats.join(", ") : "—";
+      document.getElementById("summarySeat").textContent = seatLabel;
 
-      let surcharge = 0;
-      if (seat !== "—") {
+      const surcharge = selectedSeats.reduce((sum, seat) => {
         const seatData = seats.find(s => s.seat === seat);
-        surcharge = seatData?.surcharge || 0;
-      }
+        return sum + (seatData?.surcharge || 0);
+      }, 0);
       extraSurcharge = surcharge;
       document.getElementById("summarySurcharge").textContent = surcharge > 0 ? formatVND(surcharge) : "—";
 
       const basePrice = flight?.base_price || 0;
       const passengers = flow.passengers || 1;
-      const price = basePrice * passengers;
+      const ticketCount = Math.max(passengers, selectedSeats.length || 1);
+      const price = basePrice * ticketCount;
       document.getElementById("summaryPrice").textContent = formatVND(price);
 
       const total = price + surcharge;
       document.getElementById("summaryTotal").textContent = formatVND(total);
     }
 
-    document.getElementById("confirmSeatBtn").addEventListener("click", () => {
+    document.getElementById("confirmSeatBtn").addEventListener("click", async () => {
       if (!selectedSeats.length) return;
-      saveBookingFlow({ ...flow, seatNumber: selectedSeats[0], extraSurcharge });
-      navigate(`/payment?flight=${flightId}`);
+
+      if (!getToken()) {
+        saveBookingFlow({ ...flow, seatNumbers: selectedSeats, seatNumber: selectedSeats.join(", "), extraSurcharge });
+        navigate(`/login?return=${encodeURIComponent(`/seat-map?flight=${flightId}`)}`);
+        return;
+      }
+
+      const btn = document.getElementById("confirmSeatBtn");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang tạo booking...`;
+
+      const passengers = flow.passengers || 1;
+      const ticketCount = Math.max(passengers, selectedSeats.length);
+      const seatNumber = selectedSeats.join(", ");
+      const totalPrice = (flight?.base_price || 0) * ticketCount + extraSurcharge;
+
+      try {
+        const booking = await apiCreateBooking({
+          flight_id: Number(flightId),
+          passenger_name: flow.passengerName || "Hành khách",
+          passenger_email: flow.passengerEmail || "",
+          passenger_phone: flow.passengerPhone || "",
+          seat_number: seatNumber,
+          total_price: totalPrice,
+        });
+
+        saveBookingFlow({
+          ...flow,
+          seatNumber,
+          seatNumbers: selectedSeats,
+          passengers: ticketCount,
+          extraSurcharge,
+          bookingId: booking.id,
+          bookingCode: booking.booking_code,
+          booking,
+        });
+        navigate(`/payment?booking=${booking.booking_code}`);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Xác nhận ghế & thanh toán";
+        showSeatMapError(`Không tạo được booking: ${err.message}`);
+      }
     });
 
     init();

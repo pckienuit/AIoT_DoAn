@@ -98,11 +98,12 @@
     import { navigate } from "../js/router.js";
     import { registerRoutes } from "../js/routes.js";
     import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
-    import { isLoggedIn } from "../js/auth.js";
+    import { isLoggedIn, restoreSession } from "../js/auth.js";
     import { formatVND } from "../js/components/flight-card.js";
 
     registerRoutes();
     clearStaleFlow();
+    await restoreSession();
     render();
 
     const flow = getBookingFlow();
@@ -195,6 +196,10 @@
           passengerPhone: phone,
           totalPrice: (flight.base_price || 0) * passengers,
         });
+        if (!isLoggedIn()) {
+          navigate(`/login?return=${encodeURIComponent(`/booking?flight=${flightId}`)}`);
+          return;
+        }
         navigate(`/seat-map?flight=${flightId}`);
       } catch (err) {
         alert("Có lỗi: " + err.message);
