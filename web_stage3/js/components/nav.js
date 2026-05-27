@@ -18,15 +18,28 @@ function render() {
   const loggedIn = isLoggedIn();
 
   const linksHtml = NAV_LINKS
+    .filter(l => !l.auth)
+    .map(l => {
+      const active = location.pathname === l.href ? " is-active" : "";
+      return `<a href="${l.href}" class="nav__link${active}">${l.label}</a>`;
+    }).join("");
+
+  const mobileLinksHtml = NAV_LINKS
     .filter(l => !l.auth || loggedIn)
     .map(l => {
       const active = location.pathname === l.href ? " is-active" : "";
       return `<a href="${l.href}" class="nav__link${active}">${l.label}</a>`;
     }).join("");
 
+  const accountLink = NAV_LINKS.find(l => l.href === "/my-tickets");
+  const accountLinkHtml = loggedIn && accountLink
+    ? `<a href="${accountLink.href}" class="nav__link nav__account-link${location.pathname === accountLink.href ? " is-active" : ""}">${accountLink.label}</a>`
+    : "";
+
   const authHtml = loggedIn && user
     ? `
       <div class="nav__user">
+        ${accountLinkHtml}
         <div class="nav__dropdown">
           <div class="nav__avatar" id="navAvatar" tabindex="0" role="button" aria-haspopup="true">
             ${user.full_name?.charAt(0)?.toUpperCase() || "U"}
@@ -69,7 +82,7 @@ function render() {
 
       <!-- Mobile menu -->
       <div class="nav__mobile-menu" id="navMobileMenu">
-        ${linksHtml}
+        ${mobileLinksHtml}
         ${loggedIn
           ? `<button class="nav__link" id="navLogoutBtnMobile">⏻ Đăng xuất</button>`
           : `<a href="/login" class="nav__link">Đăng nhập</a><a href="/register" class="nav__link">Đăng ký</a>`
