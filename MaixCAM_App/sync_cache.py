@@ -192,6 +192,17 @@ class CacheManager:
         Download embeddings for flight_id from server and save to cache.
         Returns number of items synced, or -1 on failure.
         """
+        if int(flight_id) == 999999:
+            print("[sync] Skipping server sync for test flight 999999 to protect local test data")
+            path = self._cache_path(flight_id)
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        return json.load(f).get("count", 0)
+                except Exception:
+                    pass
+            return 0
+
         url = "{}/api/sync/{}".format(self.server_url, flight_id)
         print("[sync] Fetching flight {} from {}".format(flight_id, url))
         data = _http_get(url, self.timeout)
