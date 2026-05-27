@@ -8,7 +8,9 @@ import time
 from config import load_config
 from sync_cache import CacheManager
 from display import (
-    draw_match_result, draw_status, draw_hud, draw_no_match
+    draw_match_result, draw_status, draw_hud, draw_no_match,
+    draw_target_brackets, draw_string_ascii, COLOR_PRIMARY, COLOR_ACCENT,
+    COLOR_OK, COLOR_DANGER, COLOR_WARN, COLOR_TEXT, COLOR_MUTED, COLOR_BLACK
 )
 import mjpeg_server
 
@@ -289,26 +291,52 @@ def draw_cached_overlay(img, overlay, now):
     crop_y = overlay["crop_y"]
     lm_abs = overlay.get("lm_abs", [])
 
-    img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
-    img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
-                  color=image.Color(255, 200, 0), thickness=1)
-    for i in range(min(5, int(len(lm_abs) / 2))):
-        img.draw_circle(lm_abs[i * 2], lm_abs[i * 2 + 1], 3, LM_COLORS[i], -1)
-
     mode = overlay.get("mode")
+    
+    # Draw target brackets based on status
+    if mode == "match":
+        draw_target_brackets(img, x, y, w, h, COLOR_OK, thickness=3)
+    elif mode == "no_match":
+        draw_target_brackets(img, x, y, w, h, COLOR_DANGER, thickness=3)
+    else:
+        draw_target_brackets(img, x, y, w, h, COLOR_PRIMARY, thickness=2)
+
+    # Faint outer crop area guide box
+    img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
+                  color=COLOR_MUTED, thickness=1)
+
+    # Draw Face Mesh landmarks & wireframe
+    num_pts = min(5, int(len(lm_abs) / 2))
+    for i in range(num_pts):
+        lx = lm_abs[i * 2]
+        ly = lm_abs[i * 2 + 1]
+        img.draw_circle(lx, ly, 3, COLOR_ACCENT, -1)
+    
+    if num_pts == 5:
+        connections = [(0, 1), (0, 2), (1, 2), (2, 3), (2, 4), (3, 4)]
+        for start_idx, end_idx in connections:
+            x1 = lm_abs[start_idx * 2]
+            y1 = lm_abs[start_idx * 2 + 1]
+            x2 = lm_abs[end_idx * 2]
+            y2 = lm_abs[end_idx * 2 + 1]
+            try:
+                img.draw_line(x1, y1, x2, y2, color=COLOR_MUTED, thickness=1)
+            except Exception:
+                pass
+
     if mode == "match":
         draw_match_result(img, overlay.get("result"), x, y, w, h)
     elif mode == "local":
-        img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=3)
-        img.draw_string(x, max(0, y - 18), overlay.get("label", ""),
-                        image.COLOR_GREEN)
+        draw_target_brackets(img, x, y, w, h, COLOR_OK, thickness=3)
+        draw_string_ascii(img, x, max(0, y - 18), overlay.get("label", ""),
+                        COLOR_OK)
     elif mode == "no_match":
         draw_no_match(img, x, y, w, h)
 
     score = overlay.get("score")
     if score is not None:
-        img.draw_string(x, y + h + 3, "v9:{:.2f}".format(score),
-                        image.COLOR_YELLOW)
+        draw_string_ascii(img, x, y + h + 3, "v9:{:.2f}".format(score),
+                        COLOR_WARN)
     return True
 
 
@@ -338,9 +366,9 @@ def draw_recognition_overlay(img, overlay):
     if mode == "match":
         draw_match_result(img, overlay.get("result"), x, y, w, h)
     elif mode == "local":
-        img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=3)
-        img.draw_string(x, max(0, y - 18), overlay.get("label", ""),
-                        image.COLOR_GREEN)
+        draw_target_brackets(img, x, y, w, h, COLOR_OK, thickness=3)
+        draw_string_ascii(img, x, max(0, y - 18), overlay.get("label", ""),
+                        COLOR_OK)
     elif mode == "no_match":
         draw_no_match(img, x, y, w, h)
 
@@ -427,9 +455,54 @@ def main():
     last_io_check = 0.0
     active_flight = read_active_flight()  # Read once at startup
 
+    # Freeze state variables for successful match timeout
+    freeze_active = False
+    freeze_start_time = 0.0
+    frozen_face_img = None
+    frozen_result = None
+    frozen_x, frozen_y, frozen_w, frozen_h = 0, 0, 0, 0
+
     while not app.need_exit():
         img = cam.read()
         now = time.time()
+
+        # Handle successful match freeze state
+        if freeze_active:
+            if now - freeze_start_time >= 5.0:
+                # Timeout elapsed: reset and return to normal scanning
+                freeze_active = False
+                frozen_face_img = None
+                frozen_result = None
+                ema_lm = None
+                last_result = None
+                recognition_cache = None
+                overlay_cache = None
+            else:
+                # Draw green brackets around the face's frozen location
+                draw_target_brackets(img, frozen_x, frozen_y, frozen_w, frozen_h, COLOR_OK, thickness=3)
+
+                # Draw boarding pass details
+                draw_match_result(img, frozen_result, frozen_x, frozen_y, frozen_w, frozen_h)
+
+                # Show remaining seconds countdown
+                remaining = int(5.0 - (now - freeze_start_time) + 0.9)
+                draw_status(img, "MATCHED - RESETS IN {}S".format(remaining), COLOR_OK)
+
+                # Draw bottom HUD bar
+                cache_info = cache_mgr.get_cache_info(active_flight)
+                draw_hud(img,
+                         db_count=len(face_db),
+                         cache_count=cache_info.get("count", 0),
+                         flight_id=active_flight,
+                         threshold=RECOG_THRESH,
+                         flight_status=cache_info.get("status"))
+
+                if disp:
+                    disp.show(img)
+                mjpeg_server.update_frame(img)
+                time.sleep(0.005)
+                frame_idx += 1
+                continue
 
         # --- Throttled file I/O: run at most once per IO_CHECK_INTERVAL seconds ---
         if now - last_io_check >= IO_CHECK_INTERVAL:
@@ -467,12 +540,12 @@ def main():
                     last_result = None
                     recognition_cache = None
                     overlay_cache = None
-                    draw_status(img, "No face", image.COLOR_RED)
+                    draw_status(img, "No face", COLOR_DANGER)
                 else:
                     # Keep showing cached overlay during grace period
                     if not draw_cached_overlay(img, overlay_cache, now):
                         overlay_cache = None
-                        draw_status(img, "No face", image.COLOR_RED)
+                        draw_status(img, "No face", COLOR_DANGER)
             else:
                 no_face_frames = 0
                 for obj in objs:
@@ -482,9 +555,10 @@ def main():
                     face_crop = make_crop_with_padding(img, crop_x, crop_y, CROP_W, CROP_H)
                     canvas = make_v9_input(face_crop)
 
-                    img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
+                    # Dynamic brackets while identifying (laser scanline removed)
+                    draw_target_brackets(img, x, y, w, h, COLOR_PRIMARY, thickness=3)
                     img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
-                                  color=image.Color(255, 200, 0), thickness=1)
+                                  color=COLOR_MUTED, thickness=1)
 
                     outputs = LM_MODEL.forward_image(
                         canvas, IMG_MEAN, IMG_SCALE,
@@ -496,7 +570,7 @@ def main():
                     class_arr    = get_tensor_array(outputs, OUT_CLASS_ALIASES)
                     landmark_arr = get_tensor_array(outputs, OUT_LANDMARK_ALIASES)
                     if class_arr is None or landmark_arr is None:
-                        img.draw_string(x, max(0, y - 15), "v9 miss", image.COLOR_RED)
+                        draw_string_ascii(img, x, max(0, y - 15), "v9 miss", COLOR_DANGER)
                         continue
 
                     score = sigmoid(class_arr[0])
@@ -509,8 +583,8 @@ def main():
                                   for i in range(10)]
 
                     if score <= LM_THRESH:
-                        img.draw_string(x, max(0, y - 15),
-                                        "low:{:.2f}".format(score), image.COLOR_RED)
+                        draw_string_ascii(img, x, max(0, y - 15),
+                                        "low:{:.2f}".format(score), COLOR_DANGER)
                         continue
 
                     lm_abs = []
@@ -521,7 +595,19 @@ def main():
                         ly = max(0, min(cam_h - 1, ly))
                         lm_abs.append(lx)
                         lm_abs.append(ly)
-                        img.draw_circle(lx, ly, 3, LM_COLORS[i], -1)
+                        img.draw_circle(lx, ly, 3, COLOR_ACCENT, -1)
+
+                    # Draw Face Mesh connecting wireframe lines
+                    connections = [(0, 1), (0, 2), (1, 2), (2, 3), (2, 4), (3, 4)]
+                    for start_idx, end_idx in connections:
+                        x1 = lm_abs[start_idx * 2]
+                        y1 = lm_abs[start_idx * 2 + 1]
+                        x2 = lm_abs[end_idx * 2]
+                        y2 = lm_abs[end_idx * 2 + 1]
+                        try:
+                            img.draw_line(x1, y1, x2, y2, color=COLOR_MUTED, thickness=1)
+                        except Exception:
+                            pass
 
                     overlay_cache = {
                         "time": now,
@@ -549,16 +635,16 @@ def main():
                         recog_face = make_recognition_crop(img, lm_abs)
                         embedding  = extract_embedding(recog_face)
                         if embedding is None:
-                            img.draw_string(x, max(0, y - 15), "P3 fail", image.COLOR_RED)
+                            draw_string_ascii(img, x, max(0, y - 15), "P3 fail", COLOR_DANGER)
                         else:
                             # --- Legacy local registration (dev mode) ---
                             if pending_name:
                                 pending_embeddings.append(embedding)
                                 progress = len(pending_embeddings)
-                                img.draw_string(10, 50,
+                                draw_string_ascii(img, 10, 50,
                                                 "Register {} {}/{}".format(
                                                     pending_name, progress, REGISTER_FRAMES),
-                                                image.COLOR_YELLOW)
+                                                COLOR_WARN)
                                 if progress >= REGISTER_FRAMES:
                                     face_db[pending_name] = average_embeddings(pending_embeddings)
                                     save_face_db(face_db)
@@ -573,7 +659,7 @@ def main():
                             # Check if recognition is allowed (flight not departed/arrived)
                             if not cache_info.get("recognition_allowed", True):
                                 flight_status = cache_info.get("status", "unknown")
-                                draw_status(img, "Flight {} - Recognition disabled".format(flight_status), image.COLOR_RED)
+                                draw_status(img, "Flight {} - Recognition disabled".format(flight_status), COLOR_DANGER)
                             elif cache_info.get("cached"):
                                 last_result = cache_mgr.match_local(embedding, active_flight)
                                 overlay_cache["mode"] = "match"
@@ -581,6 +667,14 @@ def main():
                                 recognition_cache["mode"] = "match"
                                 recognition_cache["result"] = last_result
                                 draw_match_result(img, last_result, x, y, w, h)
+                                
+                                if last_result is not None:
+                                    # Successful match: trigger 5-second freeze
+                                    freeze_active = True
+                                    freeze_start_time = now
+                                    frozen_result = last_result
+                                    frozen_face_img = recog_face
+                                    frozen_x, frozen_y, frozen_w, frozen_h = x, y, w, h
                             else:
                                 # No cache yet: fall back to legacy local DB
                                 identity, dist = match_identity_local_db(embedding, face_db)
@@ -594,13 +688,31 @@ def main():
                                     overlay_cache["label"] = label
                                     recognition_cache["mode"] = "local"
                                     recognition_cache["label"] = label
-                                    img.draw_rect(x, y, w, h,
-                                                  color=image.COLOR_GREEN, thickness=3)
-                                    img.draw_string(x, max(0, y - 18), label,
-                                                    image.COLOR_GREEN)
+                                    draw_target_brackets(img, x, y, w, h, COLOR_OK, thickness=3)
+                                    draw_string_ascii(img, x, max(0, y - 18), label,
+                                                    COLOR_OK)
+                                    
+                                    # Trigger 5-second freeze for local match too
+                                    freeze_active = True
+                                    freeze_start_time = now
+                                    frozen_result = {
+                                        "payload": {
+                                            "passenger_name": identity,
+                                            "gate": "LOCAL",
+                                            "seat_number": "DB",
+                                            "flight_number": "DEV_TEST",
+                                            "dest_city": "LOCALHOST",
+                                            "boarding_time": "NOW",
+                                            "departure_time": "NOW"
+                                        },
+                                        "source": "local",
+                                        "distance": dist
+                                    }
+                                    frozen_face_img = recog_face
+                                    frozen_x, frozen_y, frozen_w, frozen_h = x, y, w, h
 
-                    img.draw_string(x, y + h + 3,
-                                    "v9:{:.2f}".format(score), image.COLOR_YELLOW)
+                    draw_string_ascii(img, x, y + h + 3,
+                                    "v9:{:.2f}".format(score), COLOR_WARN)
                     break  # Process first face only
 
         # --- HUD ---
