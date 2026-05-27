@@ -30,7 +30,7 @@ class FaceRegisterRequest(BaseModel):
 
 
 class FaceMatchRequest(BaseModel):
-    flight_id: int
+    flight_id: int | None = None
     ciphertext: str | None = None
     iv: str | None = None
     embedding: list[float] | None = None
@@ -85,7 +85,7 @@ def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
         conn.execute(
             """
             UPDATE bookings
-            SET qdrant_point_id = ?, face_registered_at = ?, updated_at = ?
+            SET qdrant_point_id = ?, face_registered = 1, face_registered_at = ?, updated_at = ?
             WHERE id = ?
             """,
             (point_id, now, now, payload.booking_id),

@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiosk Nhận Diện — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <style>
+    .kiosk-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--sp-6);
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .kiosk-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .kiosk-camera-box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      border: 3px solid var(--border);
+      overflow: hidden;
+    }
+    .kiosk-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .kiosk-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-sizing: border-box;
+    }
+    /* Dynamic scanning target */
+    .kiosk-scanner-target {
+      width: 50%;
+      aspect-ratio: 1 / 1.2;
+      border: 2px solid rgba(255, 107, 26, 0.4);
+      position: relative;
+      transition: all 0.3s;
+    }
+    .kiosk-camera-box.scanning .kiosk-scanner-target {
+      border-color: var(--signal);
+      box-shadow: 0 0 15px rgba(255, 107, 26, 0.2);
+    }
+    .kiosk-camera-box.matching .kiosk-scanner-target {
+      border-color: var(--warn);
+      box-shadow: 0 0 25px rgba(245, 197, 24, 0.5);
+    }
+    .kiosk-camera-box.success .kiosk-scanner-target {
+      border-color: var(--ok);
+      box-shadow: 0 0 35px rgba(86, 240, 138, 0.6);
+    }
+    /* Scanning laser line */
+    .kiosk-laser {
+      position: absolute;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--signal), transparent);
+      box-shadow: 0 0 8px var(--signal);
+      animation: laser-scan 3s infinite ease-in-out;
+      display: none;
+    }
+    .kiosk-camera-box.scanning .kiosk-laser {
+      display: block;
+    }
+    @keyframes laser-scan {
+      0% { top: 0%; }
+      50% { top: 100%; }
+      100% { top: 0%; }
+    }
+    /* Info Board styles */
+    .board-header {
+      background: var(--signal);
+      color: #120900;
+      padding: var(--sp-4) var(--sp-5);
+      font-weight: 800;
+      font-size: var(--text-lg);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .board-field {
+      padding: var(--sp-4) 0;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .board-field:last-child {
+      border-bottom: none;
+    }
+    .board-label {
+      color: var(--muted);
+      font-size: var(--text-sm);
+    }
+    .board-value {
+      font-weight: 700;
+      font-size: var(--text-base);
+    }
+    .board-value.highlight {
+      color: var(--signal);
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--text-lg);
+    }
+    /* Reset countdown */
+    .reset-countdown {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+      margin-top: var(--sp-3);
+    }
+    .alert-kiosk {
+      font-family: "JetBrains Mono", monospace;
+      text-align: center;
+      padding: var(--sp-3);
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      margin-bottom: var(--sp-4);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Smart Terminal Kiosk</div>
+          <h1>Tra cứu chuyến bay bằng khuôn mặt</h1>
+          <p class="text-muted">Nhìn thẳng vào camera để hệ thống AI nhận diện hành trình và hiển thị thông tin chuyến bay của bạn lên bảng.</p>
+        </div>
+
+        <div class="kiosk-grid">
+          <!-- Left side: Camera Viewport -->
+          <div>
+            <div class="kiosk-camera-box scanning" id="kioskCameraBox">
+              <video id="kioskVideo" class="kiosk-video" autoplay playsinline muted></video>
+              <div class="kiosk-overlay">
+                <div class="kiosk-scanner-target">
+                  <div class="kiosk-laser"></div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="alert-kiosk text-signal" id="kioskStatus" style="margin-top:var(--sp-4);">
+              Khởi động hệ thống camera nhận diện...
+            </div>
+
+            <div style="display:flex; gap:var(--sp-3); justify-content:center;">
+              <button id="toggleKioskBtn" class="btn btn--primary btn--full btn--lg">📷 Khởi động Kiosk</button>
+            </div>
+          </div>
+
+          <!-- Right side: Flight Info Board -->
+          <div class="panel" style="min-height:350px; display:flex; flex-direction:column; justify-content:space-between;">
+            <div id="boardPlaceholder" style="padding:var(--sp-8) var(--sp-6); text-align:center; display:flex; flex-direction:column; justify-content:center; flex:1;">
+              <span style="font-size:3.5rem; margin-bottom:var(--sp-4); opacity:0.3;">👤</span>
+              <h3 style="color:var(--muted);">Đang đợi hành khách</h3>
+              <p class="text-xs text-muted" style="margin-top:var(--sp-1);">Hệ thống sẽ tự động quét khi phát hiện khuôn mặt đứng trước camera.</p>
+            </div>
+
+            <div id="boardDetails" style="display:none; flex:1; flex-direction:column;">
+              <div class="board-header">
+                <span id="boardPassengerName">NGUYỄN VĂN A</span>
+                <span class="badge badge--ok" style="background:#120900; color:var(--ok);" id="boardFlightStatus">BOARDING</span>
+              </div>
+              <div class="panel__body" style="flex:1; display:flex; flex-direction:column; justify-content:space-between;">
+                <div>
+                  <div class="board-field">
+                    <span class="board-label">Chuyến bay</span>
+                    <span class="board-value highlight" id="boardFlightNumber">VN123</span>
+                  </div>
+                  <div class="board-field">
+                    <span class="board-label">Hành trình</span>
+                    <span class="board-value" id="boardRoute">Hà Nội (HAN) → TP.HCM (SGN)</span>
+                  </div>
+                  <div class="board-field">
+                    <span class="board-label">Ngày bay</span>
+                    <span class="board-value" id="boardFlightDate">2026-05-27</span>
+                  </div>
+                  <div class="board-field">
+                    <span class="board-label">Giờ khởi hành</span>
+                    <span class="board-value highlight" id="boardDepTime">07:00</span>
+                  </div>
+                  <div class="board-field">
+                    <span class="board-label">Cổng ra (Gate)</span>
+                    <span class="board-value highlight" style="color:var(--accent);" id="boardGate">B07</span>
+                  </div>
+                  <div class="board-field">
+                    <span class="board-label">Số ghế (Seat)</span>
+                    <span class="board-value highlight" id="boardSeat">12A</span>
+                  </div>
+                </div>
+
+                <div class="reset-countdown" id="resetCountdown">
+                  Bảng sẽ tự động reset sau <span id="countdownSec">8</span> giây...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiFaceMatch } from "../js/api.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearStaleFlow } from "../js/storage.js";
+    import { FaceCapture } from "../js/components/face-capture.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    let faceCapture = null;
+    let isKioskRunning = false;
+    let isShowingResult = false;
+    let scanInterval = null;
+    let countdownInterval = null;
+
+    const kioskStatus = document.getElementById("kioskStatus");
+    const toggleKioskBtn = document.getElementById("toggleKioskBtn");
+    const kioskVideo = document.getElementById("kioskVideo");
+    const kioskCameraBox = document.getElementById("kioskCameraBox");
+    const boardPlaceholder = document.getElementById("boardPlaceholder");
+    const boardDetails = document.getElementById("boardDetails");
+
+    // Initialize FaceCapture Pipeline
+    faceCapture = new FaceCapture({
+      onStatus: (msg) => {
+        kioskStatus.textContent = msg;
+        if (msg === "Models loaded.") {
+          kioskStatus.textContent = "Hệ thống AI đã sẵn sàng. Nhấn nút để khởi động camera.";
+          kioskStatus.style.color = "var(--ok)";
+        }
+      }
+    });
+
+    faceCapture.init().catch(err => {
+      kioskStatus.textContent = "Lỗi tải mô hình AI: " + err.message;
+      kioskStatus.style.color = "var(--danger)";
+    });
+
+    toggleKioskBtn.addEventListener("click", async () => {
+      if (isKioskRunning) {
+        stopKiosk();
+      } else {
+        await startKiosk();
+      }
+    });
+
+    async function startKiosk() {
+      try {
+        await faceCapture.startCamera(kioskVideo);
+        isKioskRunning = true;
+        toggleKioskBtn.textContent = "🛑 Dừng Kiosk";
+        toggleKioskBtn.className = "btn btn--danger btn--full btn--lg";
+        kioskStatus.textContent = "🔍 Kiosk đang hoạt động. Quét khuôn mặt tự động...";
+        kioskStatus.style.color = "var(--ok)";
+        
+        // Start automatic polling scan loop (every 1.5 seconds)
+        scanInterval = setInterval(performScan, 1500);
+      } catch (err) {
+        alert("Lỗi camera: " + err.message);
+      }
+    }
+
+    function stopKiosk() {
+      if (scanInterval) clearInterval(scanInterval);
+      if (countdownInterval) clearInterval(countdownInterval);
+      
+      faceCapture.stopCamera();
+      isKioskRunning = false;
+      isShowingResult = false;
+      
+      toggleKioskBtn.textContent = "📷 Khởi động Kiosk";
+      toggleKioskBtn.className = "btn btn--primary btn--full btn--lg";
+      kioskStatus.textContent = "Kiosk đã dừng.";
+      kioskStatus.style.color = "var(--signal)";
+      
+      kioskCameraBox.className = "kiosk-camera-box";
+      resetBoard();
+    }
+
+    async function performScan() {
+      // If showing result, skip scanning
+      if (isShowingResult || !isKioskRunning) return;
+
+      try {
+        kioskCameraBox.className = "kiosk-camera-box scanning";
+        
+        // Quick 1-frame extraction to see if face exists
+        const result = await faceCapture.extractEmbeddingFromSource(kioskVideo);
+        
+        if (result && result.embedding) {
+          kioskCameraBox.className = "kiosk-camera-box matching";
+          kioskStatus.textContent = "⌛ Phát hiện khuôn mặt! Đang đối sánh cơ sở dữ liệu...";
+          kioskStatus.style.color = "var(--warn)";
+
+          // Query vector database without flight_id (global search)
+          const match = await apiFaceMatch(null, result.embedding);
+          
+          if (match && match.matched && match.booking) {
+            showResult(match.booking);
+          } else {
+            kioskStatus.textContent = "⚠️ Khuôn mặt không khớp với vé nào. Hãy đăng ký trước!";
+            kioskStatus.style.color = "var(--danger)";
+            kioskCameraBox.className = "kiosk-camera-box scanning";
+          }
+        }
+      } catch (err) {
+        // No face detected, keep scanning silently
+        kioskStatus.textContent = "🔍 Đang chờ hành khách đứng trước camera...";
+        kioskStatus.style.color = "var(--signal)";
+      }
+    }
+
+    function showResult(booking) {
+      isShowingResult = true;
+      kioskCameraBox.className = "kiosk-camera-box success";
+      kioskStatus.textContent = "✓ Nhận diện thành công! Chào mừng hành khách.";
+      kioskStatus.style.color = "var(--ok)";
+
+      // Fill Flight Info Board
+      document.getElementById("boardPassengerName").textContent = (booking.passenger_name || booking.user_name || "—").toUpperCase();
+      document.getElementById("boardFlightNumber").textContent = booking.flight_number || "—";
+      document.getElementById("boardRoute").textContent = `${booking.origin_city} (${booking.origin_code}) → ${booking.dest_city} (${booking.dest_code})`;
+      document.getElementById("boardFlightDate").textContent = booking.flight_date || "—";
+      document.getElementById("boardDepTime").textContent = String(booking.departure_time || "").substring(0, 5);
+      document.getElementById("boardGate").textContent = booking.gate || "B01";
+      document.getElementById("boardSeat").textContent = booking.seat_number || "—";
+      
+      const statusEl = document.getElementById("boardFlightStatus");
+      statusEl.textContent = (booking.flight_status || "BOARDING").toUpperCase();
+      if (booking.flight_status === "cancelled") {
+        statusEl.className = "badge badge--danger";
+      } else {
+        statusEl.className = "badge badge--ok";
+        statusEl.style.background = "#120900";
+        statusEl.style.color = "var(--ok)";
+      }
+
+      boardPlaceholder.style.display = "none";
+      boardDetails.style.display = "flex";
+
+      // Premium Feature: Text-To-Speech welcome greeting!
+      speakGreeting(booking);
+
+      // Start 8-second countdown to reset board back to scanning
+      let secondsLeft = 8;
+      const countdownSec = document.getElementById("countdownSec");
+      countdownSec.textContent = secondsLeft;
+
+      countdownInterval = setInterval(() => {
+        secondsLeft--;
+        countdownSec.textContent = secondsLeft;
+        if (secondsLeft <= 0) {
+          clearInterval(countdownInterval);
+          resetBoard();
+        }
+      }, 1000);
+    }
+
+    function resetBoard() {
+      isShowingResult = false;
+      boardPlaceholder.style.display = "flex";
+      boardDetails.style.display = "none";
+      if (isKioskRunning) {
+        kioskCameraBox.className = "kiosk-camera-box scanning";
+        kioskStatus.textContent = "🔍 Kiosk đang hoạt động. Quét khuôn mặt tự động...";
+        kioskStatus.style.color = "var(--ok)";
+      }
+    }
+
+    function speakGreeting(booking) {
+      try {
+        if ('speechSynthesis' in window) {
+          // Cancel any current utterances
+          window.speechSynthesis.cancel();
+          
+          const name = booking.passenger_name || booking.user_name || "";
+          const gate = booking.gate || "B01";
+          const flightNum = booking.flight_number || "";
+          const depTime = String(booking.departure_time || "").substring(0, 5);
+          
+          const text = `Xin chào ${name}. Chuyến bay ${flightNum} của quý khách khởi hành lúc ${depTime} tại cổng ra số ${gate}. Chúc quý khách một chuyến bay tốt đẹp!`;
+          
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = "vi-VN";
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          
+          window.speechSynthesis.speak(utterance);
+        }
+      } catch (err) {
+        console.error("SpeechSynthesis error:", err);
+      }
+    }
+
+    // Clean up on page unload
+    window.addEventListener("beforeunload", () => {
+      stopKiosk();
+    });
+  </script>
+</body>
+</html>

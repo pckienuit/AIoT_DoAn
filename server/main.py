@@ -41,6 +41,8 @@ PAGE_ROUTES = {
     "/my-tickets": "my-tickets.html",
     "/checkin": "checkin.html",
     "/lookup": "lookup.html",
+    "/register-face": "register-face.html",
+    "/kiosk": "kiosk.html",
 }
 
 
@@ -83,6 +85,9 @@ def web_page(page: str) -> FileResponse:
         return FileResponse(WEB_ROOT / "pages" / filename)
     return FileResponse(WEB_ROOT / "index.html")
 
+
+# Mount models folder so browser can load ONNX models
+app.mount("/models", StaticFiles(directory=str(Path(__file__).resolve().parent.parent / "models")), name="models")
 
 # Mount static assets after API and page routes so app URLs are not swallowed.
 app.mount("/", StaticFiles(directory=str(WEB_ROOT), html=True), name="static")

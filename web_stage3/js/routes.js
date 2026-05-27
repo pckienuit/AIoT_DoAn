@@ -59,4 +59,16 @@ export function registerRoutes() {
     render: initCheckin,
     requiresAuth: true,
   });
+
+  addRoute({
+    path: "/register-face",
+    title: "Đăng ký khuôn mặt",
+    render: () => {},
+  });
+
+  addRoute({
+    path: "/kiosk",
+    title: "Bảng tra cứu sân bay",
+    render: () => {},
+  });
 }

@@ -108,20 +108,32 @@ export class FaceCapture {
     try {
       // Load ONNX models
       this._sessionV9 = await ort.InferenceSession.create(
-        "/models/face_landmark_neural_network_v9.onnx"
+        "/models/exports/face_detect_v9.onnx"
       );
       this._sessionP3 = await ort.InferenceSession.create(
-        "/models/arcface_p3.onnx"
+        "/models/exports/face_recognize_arcface_p3.onnx"
       );
-    } catch {
+    } catch (e) {
+      console.warn("Failed to load real ONNX models, falling back to dummy embedding.", e);
       // Models not available — use fallback unit embedding
       this._sessionV9 = null;
       this._sessionP3 = null;
     }
 
     // Load MediaPipe Face Detection
-    const { FaceDetection } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/+esm");
-    this._detector = new FaceDetection({
+    let FaceDetectionClass = window.FaceDetection;
+    if (!FaceDetectionClass) {
+      try {
+        const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/+esm");
+        FaceDetectionClass = mp.FaceDetection || mp.default?.FaceDetection || mp.default;
+      } catch (err) {
+        console.error("Failed to dynamically import MediaPipe FaceDetection:", err);
+      }
+    }
+    if (!FaceDetectionClass) {
+      throw new Error("MediaPipe FaceDetection library is not loaded. Please include it in your HTML.");
+    }
+    this._detector = new FaceDetectionClass({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
     });
     this._detector.setOptions({

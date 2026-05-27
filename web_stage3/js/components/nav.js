@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { href: "/", label: "Trang chủ", icon: "⌂" },
   { href: "/lookup", label: "Tra cứu vé", icon: "🔍" },
   { href: "/my-tickets", label: "Vé của tôi", icon: "⊞", auth: true },
+  { href: "/kiosk", label: "Kiosk nhận diện", icon: "📷" },
 ];
 
 function render() {

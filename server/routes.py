@@ -558,12 +558,23 @@ def change_seat(
         raise HTTPException(status_code=409, detail="Cannot change seat in current booking state")
 
     # Check seat is free
-    taken = _fetch_one(
-        "SELECT id FROM bookings WHERE flight_id = ? AND seat_number = ? AND id != ? AND status != 'cancelled'",
-        (row["flight_id"], payload.new_seat_number.upper(), booking_id),
+    requested_seats = [s.strip().upper() for s in payload.new_seat_number.split(",") if s.strip()]
+    if not requested_seats:
+        raise HTTPException(status_code=422, detail="Invalid seat number")
+
+    existing = _fetch_all(
+        "SELECT id, seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND id != ? AND status != 'cancelled'",
+        (row["flight_id"], booking_id),
     )
-    if taken:
-        raise HTTPException(status_code=409, detail="Seat is already taken")
+    taken = {
+        seat.strip().upper()
+        for r in existing
+        for seat in str(r["seat_number"]).split(",")
+        if seat.strip()
+    }
+    conflict = sorted(taken.intersection(requested_seats))
+    if conflict:
+        raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
 
     from datetime import datetime
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

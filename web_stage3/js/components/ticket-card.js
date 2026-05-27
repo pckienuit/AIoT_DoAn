@@ -31,6 +31,16 @@ function createTicketCard(booking, { onCancel, onChangeSeat, onCheckin } = {}) {
   const canChangeSeat = status === "confirmed" && !seat;
   const canPrint = true;
 
+  const hasFace = !!booking.face_registered || !!booking.qdrant_point_id;
+  const canRegisterFace = status === "confirmed" && booking.payment_status === "paid" && !hasFace;
+
+  const faceBadge = hasFace
+    ? `<span class="badge" style="background:var(--ok-dim); color:var(--ok); border:1px solid var(--ok);">✓ Gương mặt</span>`
+    : "";
+
+  const registerFaceBtn = canRegisterFace
+    ? `<a href="/register-face?booking=${code}" class="btn btn--primary btn--sm">Đăng ký mặt</a>`
+    : "";
   const cancelBtn = canCancel
     ? `<button class="btn btn--danger btn--sm" data-action="cancel">Hủy vé</button>`
     : "";
@@ -60,6 +70,7 @@ function createTicketCard(booking, { onCancel, onChangeSeat, onCheckin } = {}) {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           ${statusMap[status] || ""}
           ${paymentBadge}
+          ${faceBadge}
         </div>
       </div>
 
@@ -79,6 +90,7 @@ function createTicketCard(booking, { onCancel, onChangeSeat, onCheckin } = {}) {
         <div class="ticket-card__actions">
           <div class="booking-code">${code}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;margin-top:8px;">
+            ${registerFaceBtn}
             ${checkinBtn}
             ${seatBtn}
             ${printBtn}

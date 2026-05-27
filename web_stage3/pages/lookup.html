@@ -243,6 +243,9 @@
           buttonsHtml += `<a href="/payment?booking=${b.booking_code}" class="btn btn--accent btn--lg">Thanh toán ngay</a>`;
         } else if (b.payment_status === "paid") {
           buttonsHtml += `<a href="/checkin?booking=${b.booking_code}" class="btn btn--accent btn--lg">Check-in trực tuyến</a>`;
+          if (!b.face_registered) {
+            buttonsHtml += `<a href="/register-face?booking=${b.booking_code}" class="btn btn--primary btn--lg">Đăng ký khuôn mặt</a>`;
+          }
         }
 
         if (!b.seat_number) {
