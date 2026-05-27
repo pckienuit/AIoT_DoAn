@@ -373,8 +373,6 @@
       boardPlaceholder.style.display = "none";
       boardDetails.style.display = "flex";
 
-      // Premium Feature: Text-To-Speech welcome greeting!
-      speakGreeting(booking);
 
       // Start 8-second countdown to reset board back to scanning
       let secondsLeft = 8;
@@ -399,31 +397,6 @@
         kioskCameraBox.className = "kiosk-camera-box scanning";
         kioskStatus.textContent = "🔍 Kiosk đang hoạt động. Quét khuôn mặt tự động...";
         kioskStatus.style.color = "var(--ok)";
-      }
-    }
-
-    function speakGreeting(booking) {
-      try {
-        if ('speechSynthesis' in window) {
-          // Cancel any current utterances
-          window.speechSynthesis.cancel();
-          
-          const name = booking.passenger_name || booking.user_name || "";
-          const gate = booking.gate || "B01";
-          const flightNum = booking.flight_number || "";
-          const depTime = String(booking.departure_time || "").substring(0, 5);
-          
-          const text = `Xin chào ${name}. Chuyến bay ${flightNum} của quý khách khởi hành lúc ${depTime} tại cổng ra số ${gate}. Chúc quý khách một chuyến bay tốt đẹp!`;
-          
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = "vi-VN";
-          utterance.rate = 1.0;
-          utterance.pitch = 1.0;
-          
-          window.speechSynthesis.speak(utterance);
-        }
-      } catch (err) {
-        console.error("SpeechSynthesis error:", err);
       }
     }
 
