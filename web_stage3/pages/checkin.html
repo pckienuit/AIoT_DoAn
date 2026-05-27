@@ -172,8 +172,12 @@
               <span class="mono font-bold text-signal">${b.seat_number || "Chưa chọn ghế"}</span>
             </div>
             <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Thanh toán</span>
+              <span>${paymentBadge}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
               <span class="text-muted text-sm">Trạng thái</span>
-              <div>${statusBadge} ${paymentBadge}</div>
+              <span>${statusBadge}</span>
             </div>
           </div>
         </div>`;
