@@ -195,6 +195,101 @@ async function apiSyncFlight(flightId) {
 }
 
 // ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+async function apiAdminLogin(email, password) {
+  return apiRequest("/api/admin/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+async function apiAdminGetStats() {
+  return apiRequest("/api/admin/stats");
+}
+
+async function apiAdminGetFlights(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.date) params.set("date", filters.date);
+  if (filters.search) params.set("search", filters.search);
+  const qs = params.toString();
+  return apiRequest(`/api/admin/flights${qs ? "?" + qs : ""}`);
+}
+
+async function apiAdminGetFlight(id) {
+  return apiRequest(`/api/admin/flights/${id}`);
+}
+
+async function apiAdminUpdateFlightStatus(id, status) {
+  return apiRequest(`/api/admin/flights/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+async function apiAdminDeleteFlight(id) {
+  return apiRequest(`/api/admin/flights/${id}`, { method: "DELETE" });
+}
+
+async function apiAdminRestoreFlight(id) {
+  return apiRequest(`/api/admin/flights/${id}/restore`, { method: "PATCH" });
+}
+
+async function apiAdminGetBookings(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.flight_id) params.set("flight_id", filters.flight_id);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.payment_status) params.set("payment_status", filters.payment_status);
+  if (filters.face_registered !== undefined) params.set("face_registered", filters.face_registered);
+  const qs = params.toString();
+  return apiRequest(`/api/admin/bookings${qs ? "?" + qs : ""}`);
+}
+
+async function apiAdminGetBooking(id) {
+  return apiRequest(`/api/admin/bookings/${id}`);
+}
+
+async function apiAdminUpdateBookingStatus(id, status) {
+  return apiRequest(`/api/admin/bookings/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+async function apiAdminDeleteFaceRegistration(bookingId) {
+  return apiRequest(`/api/admin/bookings/${bookingId}/face`, { method: "DELETE" });
+}
+
+async function apiAdminGetRegisteredFlights() {
+  return apiRequest("/api/admin/sync/registered-flights");
+}
+
+async function apiAdminSyncTrigger(payload) {
+  return apiRequest("/api/admin/sync/trigger", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function apiAdminSyncStatus() {
+  return apiRequest("/api/admin/sync/status");
+}
+
+async function apiAdminDeleteFlightCache(flightId) {
+  return apiRequest(`/api/admin/sync/cache/${flightId}`, { method: "DELETE" });
+}
+
+async function apiAdminRunFlightStatusUpdate() {
+  return apiRequest("/api/admin/flight-status/update", { method: "POST" });
+}
+
+async function apiAdminHealth() {
+  return apiRequest("/api/admin/health");
+}
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
 
@@ -276,4 +371,22 @@ export {
   formatDate,
   formatTime,
   formatDateTime,
+  // Admin
+  apiAdminLogin,
+  apiAdminGetStats,
+  apiAdminGetFlights,
+  apiAdminGetFlight,
+  apiAdminUpdateFlightStatus,
+  apiAdminDeleteFlight,
+  apiAdminRestoreFlight,
+  apiAdminGetBookings,
+  apiAdminGetBooking,
+  apiAdminUpdateBookingStatus,
+  apiAdminDeleteFaceRegistration,
+  apiAdminGetRegisteredFlights,
+  apiAdminSyncTrigger,
+  apiAdminSyncStatus,
+  apiAdminDeleteFlightCache,
+  apiAdminRunFlightStatusUpdate,
+  apiAdminHealth,
 };

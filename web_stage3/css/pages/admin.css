@@ -1,0 +1,454 @@
+/* ==========================================================================
+   ADMIN PAGE — Flight & Booking management panel styles
+   ========================================================================== */
+
+/* --- Admin shell --- */
+.admin {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(90deg, rgba(214,255,63,0.05) 1px, transparent 1px),
+    linear-gradient(rgba(255,107,26,0.04) 1px, transparent 1px),
+    radial-gradient(ellipse 60% 40% at 90% 5%, rgba(255,107,26,0.12), transparent 60%),
+    var(--bg);
+  background-size: 56px 56px, 56px 56px, auto, auto;
+}
+
+/* --- Admin topbar --- */
+.admin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  height: var(--nav-height);
+  border-bottom: 1px solid var(--border);
+  background: rgba(9, 10, 7, 0.95);
+  backdrop-filter: blur(12px);
+  padding: 0 var(--sp-6);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.admin-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.admin-bar__logo {
+  width: 36px;
+  height: 36px;
+  background: var(--signal);
+  display: grid;
+  place-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #120900;
+  flex-shrink: 0;
+}
+
+.admin-bar__title {
+  font-weight: 800;
+  font-size: var(--text-lg);
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+.admin-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 1;
+  justify-content: center;
+}
+
+.admin-bar__nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  transition: all var(--t-base);
+  font-family: inherit;
+}
+.admin-bar__nav-btn:hover {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--panel);
+}
+.admin-bar__nav-btn.is-active {
+  color: var(--signal);
+  border-color: var(--signal-dim);
+  background: var(--signal-dim);
+}
+
+.admin-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* --- Admin content --- */
+.admin-main {
+  flex: 1;
+  padding: var(--sp-8) 0;
+  animation: fadeUp 0.35s ease both;
+}
+
+.admin-section { display: none; }
+.admin-section.is-active { display: block; }
+
+/* --- Login page --- */
+.login-wrap {
+  min-height: calc(100vh - var(--nav-height));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: min(100% - 32px, 420px);
+}
+
+.login-card .panel__body { padding: var(--sp-8); }
+
+/* --- Metric cards row --- */
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-8);
+}
+
+.metric-card {
+  padding: var(--sp-5);
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(17,19,13,0.94), rgba(9,10,7,0.98));
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--signal);
+}
+
+.metric-card__label {
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: var(--sp-2);
+}
+
+.metric-card__value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.metric-card__sub {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin-top: var(--sp-1);
+}
+
+/* --- Filter bar --- */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: flex-end;
+  padding: var(--sp-5);
+  border: 1px solid var(--border);
+  background: rgba(17, 19, 13, 0.8);
+  margin-bottom: var(--sp-6);
+}
+
+.filter-bar .field {
+  flex: 1;
+  min-width: 160px;
+}
+
+.filter-bar .input,
+.filter-bar .select {
+  min-height: 40px;
+}
+
+/* --- Data tables --- */
+.data-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(17,19,13,0.96), rgba(12,13,9,0.98));
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.data-table th {
+  padding: var(--sp-3) var(--sp-4);
+  text-align: left;
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.data-table td {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid rgba(57,53,34,0.5);
+  vertical-align: middle;
+}
+
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: rgba(255,107,26,0.03); }
+
+.data-table tr.row-deleted td { opacity: 0.5; }
+
+.data-table tr.row-expanded td {
+  background: rgba(0,0,0,0.15);
+  padding: 0;
+}
+
+/* --- Status dots --- */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: var(--sp-2);
+  vertical-align: middle;
+}
+.status-dot--online  { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.status-dot--offline { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+.status-dot--warn    { background: var(--warn); }
+
+/* --- Flight route display --- */
+.route-code {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: var(--text-base);
+}
+.route-arrow {
+  color: var(--muted);
+  margin: 0 var(--sp-2);
+  font-size: 0.8em;
+}
+
+/* --- Expand toggle --- */
+.expand-btn {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: all var(--t-base);
+  flex-shrink: 0;
+}
+.expand-btn:hover { border-color: var(--accent); color: var(--accent); }
+.expand-btn.is-open { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+/* --- Expanded booking detail row --- */
+.expanded-row td {
+  padding: 0 !important;
+}
+.expanded-content {
+  padding: var(--sp-4) var(--sp-6);
+  background: rgba(0,0,0,0.2);
+}
+
+/* --- Section header --- */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+  flex-wrap: wrap;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+/* --- Sync section --- */
+.sync-device-card {
+  padding: var(--sp-5);
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(17,19,13,0.94), rgba(9,10,7,0.98));
+  margin-bottom: var(--sp-6);
+}
+
+.sync-device-card__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.sync-device-info {
+  flex: 1;
+  min-width: 200px;
+}
+
+.sync-device-info span {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sync-device-info strong {
+  display: block;
+  font-size: var(--text-base);
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink);
+  margin-top: 2px;
+}
+
+/* --- Flight checkbox list --- */
+.flight-check-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+}
+
+.flight-check-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  background: rgba(17,19,13,0.6);
+  cursor: pointer;
+  transition: all var(--t-base);
+}
+.flight-check-item:hover { border-color: var(--accent); background: rgba(214,255,63,0.05); }
+.flight-check-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.flight-check-item__info { flex: 1; min-width: 0; }
+.flight-check-item__route {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+.flight-check-item__meta {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.flight-check-item__faces {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xs);
+  color: var(--ok);
+  background: var(--ok-dim);
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+}
+
+/* --- Sync output log --- */
+.sync-log {
+  min-height: 200px;
+  max-height: 400px;
+  overflow: auto;
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  color: var(--ok);
+  background: #050604;
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin-top: var(--sp-4);
+}
+
+/* --- Pagination --- */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+  flex-wrap: wrap;
+}
+.pagination__info {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-family: "JetBrains Mono", monospace;
+}
+.pagination__btns {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+/* --- Toast notifications --- */
+.toast {
+  position: fixed;
+  bottom: var(--sp-6);
+  right: var(--sp-6);
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-lg);
+  z-index: 9999;
+  max-width: 360px;
+  animation: fadeUp 0.3s ease both;
+  font-size: var(--text-sm);
+}
+.toast.is-success { border-left: 4px solid var(--ok); color: var(--ok); }
+.toast.is-error   { border-left: 4px solid var(--danger); color: var(--danger); }
+.toast.is-info    { border-left: 4px solid var(--signal); color: var(--signal); }
+
+/* --- Responsive --- */
+@media (max-width: 900px) {
+  .admin-bar__nav { display: none; }
+  .filter-bar { flex-direction: column; }
+  .filter-bar .field { width: 100%; }
+  .metrics-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .metrics-row { grid-template-columns: 1fr; }
+  .data-table { font-size: var(--text-xs); }
+  .data-table th,
+  .data-table td { padding: var(--sp-2) var(--sp-3); }
+}
