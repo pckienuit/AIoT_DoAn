@@ -22,10 +22,21 @@ sftp.put(r"d:\AIoT_DoAn\MaixCAM_App\main.py", "/root/main.py")
 print("    Done.")
 sftp.close()
 
-# Kill old processes
-print("[3] Killing all python processes ...")
-ssh.exec_command("killall -9 python3; killall -9 python; sleep 2")
-time.sleep(3)
+# Kill old processes gracefully first (SIGTERM) to let camera release buffers
+print("[3] Killing all python processes gracefully (SIGTERM) ...")
+ssh.exec_command("killall -15 python3; killall -15 python")
+print("    Waiting 5s for camera and VENC drivers to release buffers...")
+time.sleep(5)
+
+# Force kill fallback if still alive
+stdin_check, stdout_check, stderr_check = ssh.exec_command("ps aux | grep main.py | grep -v grep")
+alive = stdout_check.read().decode().strip()
+if alive:
+    print("    Force killing remaining processes (SIGKILL) ...")
+    ssh.exec_command("killall -9 python3 2>/dev/null; killall -9 python 2>/dev/null; sleep 1")
+    time.sleep(2)
+else:
+    print("    Processes exited cleanly. No force kill needed.")
 
 # Restart with unbuffered output
 print("[4] Starting app (python -u) ...")

@@ -67,8 +67,8 @@ RECOG_SCALE = [0.0078125, 0.0078125, 0.0078125]
 # =====================================================================
 CELEBA_W     = 178
 CELEBA_H     = 218
-CROP_W       = CELEBA_W
-CROP_H       = CELEBA_H
+CROP_W       = CELEBA_W * 2
+CROP_H       = CELEBA_H * 2
 EYE_V_OFFSET = 0.51
 MODEL_W      = 224
 MODEL_H      = 224
@@ -79,7 +79,7 @@ DETECT_CONF  = 0.40
 DETECT_IOU   = 0.45
 LM_THRESH    = 0.40
 LM_ALPHA     = 0.35
-RECOG_THRESH = CFG.get("match_threshold", 0.045)
+RECOG_THRESH = CFG.get("match_threshold", 0.018)
 REGISTER_FRAMES = 7
 AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 3)))
 RECOG_FRAME_INTERVAL = max(1, int(CFG.get("recognition_frame_interval", 9)))
@@ -377,8 +377,8 @@ def do_sync(active_flight_id: int) -> int:
 # MAIN
 # =====================================================================
 def main():
-    cam_w = FACE_DET.input_width()
-    cam_h = FACE_DET.input_height()
+    cam_w = 640
+    cam_h = 480
     cam  = camera.Camera(cam_w, cam_h, FACE_DET.input_format())
 
     enable_lcd = CFG.get("enable_lcd", True)

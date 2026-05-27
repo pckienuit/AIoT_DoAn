@@ -1,15 +1,17 @@
 {
   "server_url": "http://10.154.36.100:8000",
-  "flight_ids": [12],
+  "flight_ids": [
+    12
+  ],
   "sync_interval_sec": 300,
   "cache_dir": "/root/cache",
-  "match_threshold": 0.045,
+  "match_threshold": 0.032,
   "api_timeout_sec": 5,
   "fallback_enabled": true,
   "enable_lcd": false,
   "device_secret_key": "d3v1c3_s3cr3t_ke",
   "stream_fps_limit": 15,
-  "stream_jpeg_quality": 70,
+  "stream_jpeg_quality": 90,
   "ai_frame_interval": 3,
   "recognition_frame_interval": 9,
   "overlay_cache_ttl_sec": 1.0,

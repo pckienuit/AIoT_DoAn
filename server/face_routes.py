@@ -19,7 +19,7 @@ from server.crypto_service import (
 )
 
 router = APIRouter(prefix="/api", tags=["face"])
-MATCH_DISTANCE_THRESHOLD = 0.045
+MATCH_DISTANCE_THRESHOLD = 0.018
 
 
 class FaceRegisterRequest(BaseModel):

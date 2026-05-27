@@ -22,17 +22,24 @@ def run(cmd, wait=2):
     if err:
         print("[ERR]", err)
 
-# Kill ALL python processes aggressively
-print("=== Killing all python/main.py processes ===")
-run("killall -9 python3 2>/dev/null; killall -9 python 2>/dev/null; sleep 2", wait=3)
+# 1. Graceful kill (SIGTERM/15) to allow C++ destructors to release camera/VENC buffers
+print("=== Killing all python/main.py processes gracefully (SIGTERM) ===")
+run("killall -15 python3 2>/dev/null; killall -15 python 2>/dev/null")
+print("Waiting 5s for camera and VENC drivers to release buffers...")
+time.sleep(5)
+
+# 2. Check if still alive before force-killing
+stdin, stdout, stderr = ssh.exec_command("ps aux | grep main.py | grep -v grep")
+alive = stdout.read().decode().strip()
+if alive:
+    print("\n=== Force killing remaining python processes (SIGKILL) ===")
+    run("killall -9 python3 2>/dev/null; killall -9 python 2>/dev/null; sleep 1", wait=2)
+else:
+    print("\nProcesses exited cleanly. No force kill needed.")
 
 # Check nothing is left
 print("\n=== Remaining processes ===")
 run("ps aux | grep -E 'python|main' | grep -v grep")
-
-# Wait for camera driver to release buffers
-print("\n=== Waiting 3s for camera buffers to free ===")
-time.sleep(3)
 
 # Start fresh
 print("\n=== Starting app ===")
