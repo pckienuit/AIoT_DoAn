@@ -8,7 +8,7 @@ import os
 CONFIG_PATH = "/root/config.json"
 
 DEFAULTS = {
-    "server_url": "http://10.154.35.1:8000",
+    "server_url": "http://10.154.36.100:8000",
     "flight_ids": [1],          # List of flight IDs to sync
     "sync_interval_sec": 300,   # Sync every 5 minutes
     "cache_dir": "/root/cache", # SD card cache directory

@@ -10,6 +10,7 @@ from server.face_routes import router as face_router
 from server.routes import register_routes
 from server.seed import maintain_prototype_flights
 from server.vector_service import ensure_face_collection, get_vector_status
+from server.admin_routes import router as admin_router
 
 
 app = FastAPI(
@@ -29,6 +30,7 @@ app.add_middleware(
 # Register all routers
 register_routes(app)
 app.include_router(face_router)
+app.include_router(admin_router)
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web_stage3"
 PAGE_ROUTES = {
@@ -44,6 +46,7 @@ PAGE_ROUTES = {
     "/lookup": "lookup.html",
     "/register-face": "register-face.html",
     "/kiosk": "kiosk.html",
+    "/admin": "admin.html",
 }
 
 

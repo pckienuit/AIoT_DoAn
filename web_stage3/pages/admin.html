@@ -1,0 +1,1215 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/admin.css" />
+</head>
+<body>
+  <div class="admin">
+
+    <!-- ===== LOGIN ===== -->
+    <div class="login-wrap" id="loginSection">
+      <div class="login-card panel panel--raised">
+        <div class="panel__header" style="padding:var(--sp-6);border-bottom:1px solid var(--border);">
+          <div>
+            <h2 style="font-size:var(--text-xl);margin-bottom:4px;">AIoT Admin</h2>
+            <p style="color:var(--muted);font-size:var(--text-sm);">Quản trị hệ thống check-in khuôn mặt</p>
+          </div>
+        </div>
+        <div class="panel__body">
+          <div class="field" style="margin-bottom:var(--sp-4);">
+            <label class="label" for="loginEmail">Email</label>
+            <input class="input" type="email" id="loginEmail" placeholder="admin@aiot.flight" value="admin@aiot.flight" />
+          </div>
+          <div class="field" style="margin-bottom:var(--sp-6);">
+            <label class="label" for="loginPassword">Mật khẩu</label>
+            <input class="input" type="password" id="loginPassword" placeholder="••••••••" value="admin1234" />
+          </div>
+          <div class="alert alert--error is-hidden" id="loginError" style="margin-bottom:var(--sp-4);"></div>
+          <button class="btn btn--primary btn--full btn--lg" id="loginBtn">Đăng nhập</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TOPBAR ===== -->
+    <div class="admin-bar" id="adminBar" style="display:none;">
+      <div class="admin-bar__brand">
+        <div class="admin-bar__logo">A</div>
+        <span class="admin-bar__title">AIoT Admin</span>
+      </div>
+      <nav class="admin-bar__nav">
+        <button class="admin-bar__nav-btn is-active" data-tab="dashboard">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+          Dashboard
+        </button>
+        <button class="admin-bar__nav-btn" data-tab="flights">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+          Chuyến bay
+        </button>
+        <button class="admin-bar__nav-btn" data-tab="bookings">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+          Đặt vé
+        </button>
+        <button class="admin-bar__nav-btn" data-tab="sync">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+          Edge Sync
+        </button>
+      </nav>
+      <div class="admin-bar__actions">
+        <button class="btn btn--ghost btn--sm" id="logoutBtn">Đăng xuất</button>
+      </div>
+    </div>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <div class="admin-main" id="adminMain" style="display:none;">
+      <div class="shell">
+
+        <!-- ===== DASHBOARD ===== -->
+        <div class="admin-section is-active" id="dashboardSection">
+          <div class="section-header">
+            <div>
+              <h2>Tổng quan</h2>
+              <p style="color:var(--muted);margin-top:4px;">Trạng thái hệ thống hiện tại</p>
+            </div>
+            <button class="btn btn--ghost" id="refreshStatsBtn">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Làm mới
+            </button>
+          </div>
+          <div class="metrics-row" id="statsCards">
+            <div class="metric-card"><div class="metric-card__label">Tổng chuyến bay</div><div class="metric-card__value" id="statFlights">—</div><div class="metric-card__sub" id="statFlightsToday">— hôm nay</div></div>
+            <div class="metric-card"><div class="metric-card__label">Tổng đặt vé</div><div class="metric-card__value" id="statBookings">—</div><div class="metric-card__sub" id="statCheckins">— đã check-in</div></div>
+            <div class="metric-card"><div class="metric-card__label">Doanh thu</div><div class="metric-card__value" id="statRevenue">—</div><div class="metric-card__sub" id="statRevenueSub">VNĐ</div></div>
+            <div class="metric-card"><div class="metric-card__label">Người dùng</div><div class="metric-card__value" id="statUsers">—</div><div class="metric-card__sub" id="statFaces">— khuôn mặt đã đăng ký</div></div>
+          </div>
+
+          <div class="panel panel--raised" style="margin-bottom:var(--sp-6);">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);">
+              <div>
+                <h3 style="margin-bottom:2px;">Cập nhật trạng thái chuyến bay</h3>
+                <p style="color:var(--muted);font-size:var(--text-sm);">Chạy thủ công logic tự động cập nhật departed/arrived</p>
+              </div>
+            </div>
+            <div class="panel__body" style="display:flex;gap:var(--sp-4);flex-wrap:wrap;align-items:center;">
+              <button class="btn btn--primary" id="runFlightStatusBtn">Chạy cập nhật trạng thái</button>
+              <span id="flightStatusResult" style="color:var(--muted);font-size:var(--text-sm);"></span>
+            </div>
+          </div>
+
+          <div class="panel panel--raised" style="margin-bottom:var(--sp-6);border-color:var(--warn);">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);">
+              <div>
+                <h3 style="margin-bottom:2px;">Quản lý Database</h3>
+                <p style="color:var(--muted);font-size:var(--text-sm);">Chỉ dùng cho prototype SQLite — không áp dụng với MySQL production</p>
+              </div>
+            </div>
+            <div class="panel__body" style="display:flex;gap:var(--sp-4);flex-wrap:wrap;align-items:center;">
+              <button class="btn btn--ghost" id="clearDbBtn">Clear DB</button>
+              <button class="btn btn--primary" id="seedDbBtn">Seed DB</button>
+              <span id="dbOperationResult" style="color:var(--muted);font-size:var(--text-sm);"></span>
+            </div>
+          </div>
+
+          <div class="section-header"><h3>Chuyến bay gần đây</h3></div>
+          <div class="data-table-wrap">
+            <table class="data-table" id="recentFlightsTable">
+              <thead><tr>
+                <th>Mã CB</th><th>Tuyến</th><th>Ngày</th><th>Khởi hành</th><th>Trạng thái</th><th>Đặt vé</th>
+              </tr></thead>
+              <tbody id="recentFlightsBody"><tr><td colspan="6" style="text-align:center;color:var(--muted);padding:var(--sp-8);">Đang tải…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===== FLIGHTS ===== -->
+        <div class="admin-section" id="flightsSection">
+          <div class="section-header">
+            <div>
+              <h2>Chuyến bay</h2>
+              <p style="color:var(--muted);margin-top:4px;">Xem, cập nhật trạng thái và xóa chuyến bay</p>
+            </div>
+            <button class="btn btn--ghost" id="refreshFlightsBtn">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Làm mới
+            </button>
+          </div>
+
+          <div class="filter-bar">
+            <div class="field">
+              <label class="label" for="flightSearch">Tìm kiếm</label>
+              <input class="input" type="text" id="flightSearch" placeholder="Mã chuyến bay, sân bay…" />
+            </div>
+            <div class="field">
+              <label class="label" for="flightStatusFilter">Trạng thái</label>
+              <select class="select" id="flightStatusFilter">
+                <option value="">Tất cả</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="boarding">Boarding</option>
+                <option value="departed">Departed</option>
+                <option value="arrived">Arrived</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="flightDateFilter">Ngày</label>
+              <input class="input" type="date" id="flightDateFilter" />
+            </div>
+            <button class="btn btn--primary" id="applyFlightFilters">Lọc</button>
+            <button class="btn btn--ghost" id="clearFlightFilters">Xóa lọc</button>
+          </div>
+
+          <div class="data-table-wrap">
+            <table class="data-table" id="flightsTable">
+              <thead><tr>
+                <th style="width:36px;"></th>
+                <th>ID</th>
+                <th>Mã CB</th>
+                <th>Tuyến</th>
+                <th>Ngày</th>
+                <th>Khởi hành</th>
+                <th>Trạng thái</th>
+                <th>Đặt vé</th>
+                <th>Ghế</th>
+                <th>Thao tác</th>
+              </tr></thead>
+              <tbody id="flightsBody"><tr><td colspan="10" style="text-align:center;color:var(--muted);padding:var(--sp-8);">Đang tải…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="flightsPagination">
+            <span class="pagination__info" id="flightsPaginationInfo"></span>
+            <div class="pagination__btns" id="flightsPaginationBtns"></div>
+          </div>
+        </div>
+
+        <!-- ===== BOOKINGS ===== -->
+        <div class="admin-section" id="bookingsSection">
+          <div class="section-header">
+            <div>
+              <h2>Đặt vé</h2>
+              <p style="color:var(--muted);margin-top:4px;">Quản lý đặt vé, thanh toán và đăng ký khuôn mặt</p>
+            </div>
+            <button class="btn btn--ghost" id="refreshBookingsBtn">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Làm mới
+            </button>
+          </div>
+
+          <div class="filter-bar">
+            <div class="field">
+              <label class="label" for="bookingFlightFilter">Chuyến bay ID</label>
+              <input class="input" type="number" id="bookingFlightFilter" placeholder="VD: 12" min="1" />
+            </div>
+            <div class="field">
+              <label class="label" for="bookingStatusFilter">Trạng thái vé</label>
+              <select class="select" id="bookingStatusFilter">
+                <option value="">Tất cả</option>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="checked_in">Checked-in</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="refunded">Refunded</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="bookingPaymentFilter">Thanh toán</label>
+              <select class="select" id="bookingPaymentFilter">
+                <option value="">Tất cả</option>
+                <option value="unpaid">Chưa thanh toán</option>
+                <option value="paid">Đã thanh toán</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label" for="bookingFaceFilter">Khuôn mặt</label>
+              <select class="select" id="bookingFaceFilter">
+                <option value="">Tất cả</option>
+                <option value="1">Đã đăng ký</option>
+                <option value="0">Chưa đăng ký</option>
+              </select>
+            </div>
+            <button class="btn btn--primary" id="applyBookingFilters">Lọc</button>
+            <button class="btn btn--ghost" id="clearBookingFilters">Xóa lọc</button>
+          </div>
+
+          <div class="data-table-wrap">
+            <table class="data-table" id="bookingsTable">
+              <thead><tr>
+                <th>ID</th>
+                <th>Mã đặt</th>
+                <th>Hành khách</th>
+                <th>Chuyến bay</th>
+                <th>Ghế</th>
+                <th>Trạng thái</th>
+                <th>Thanh toán</th>
+                <th>Mặt</th>
+                <th>Thao tác</th>
+              </tr></thead>
+              <tbody id="bookingsBody"><tr><td colspan="9" style="text-align:center;color:var(--muted);padding:var(--sp-8);">Đang tải…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="bookingsPagination">
+            <span class="pagination__info" id="bookingsPaginationInfo"></span>
+            <div class="pagination__btns" id="bookingsPaginationBtns"></div>
+          </div>
+        </div>
+
+        <!-- ===== EDGE SYNC ===== -->
+        <div class="admin-section" id="syncSection">
+          <div class="section-header">
+            <div>
+              <h2>Edge Sync</h2>
+              <p style="color:var(--muted);margin-top:4px;">Đồng bộ dữ liệu khuôn mặt lên thiết bị MaixCAM</p>
+            </div>
+          </div>
+
+          <div class="sync-device-card">
+            <div style="margin-bottom:var(--sp-4);">
+              <span style="color:var(--muted);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:0.1em;font-family:'JetBrains Mono',monospace;">Thiết bị Edge</span>
+              <div style="display:flex;align-items:center;gap:var(--sp-3);margin-top:4px;">
+                <span class="status-dot status-dot--offline" id="deviceStatusDot"></span>
+                <span class="mono" style="font-size:var(--text-base);" id="deviceHostDisplay">—</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;">
+              <button class="btn btn--ghost" id="checkDeviceBtn">Kiểm tra thiết bị</button>
+              <button class="btn btn--primary" id="syncAllBtn">Sync All (Flight 999999)</button>
+              <button class="btn btn--ghost" id="deleteAllCacheBtn" style="border-color:var(--danger);color:var(--danger);">Delete All Cache</button>
+            </div>
+          </div>
+
+          <div class="panel panel--raised" style="margin-bottom:var(--sp-6);">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);">
+              <h3>Chuyến bay đã đăng ký khuôn mặt</h3>
+            </div>
+            <div class="panel__body">
+              <div id="registeredFlightsCheckboxes">
+                <p style="color:var(--muted);padding:var(--sp-4);">Đang tải…</p>
+              </div>
+              <div style="margin-top:var(--sp-4);display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;">
+                <div class="field" style="flex:0 0 auto;">
+                  <label class="label" for="syncModeSelect">Chế độ sync</label>
+                  <select class="select" id="syncModeSelect" style="min-height:40px;">
+                    <option value="flag">Flag-based</option>
+                    <option value="direct">Direct (SSH)</option>
+                  </select>
+                </div>
+                <button class="btn btn--accent" id="syncSelectedBtn" disabled>Sync đã chọn</button>
+                <span id="selectedFlightCount" style="color:var(--muted);font-size:var(--text-sm);"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel panel--raised">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);">
+              <h3>Device Status</h3>
+            </div>
+            <div class="panel__body" id="deviceStatusBody">
+              <div class="metric-stack">
+                <div class="metric">
+                  <span>Process</span>
+                  <strong id="deviceProcess">—</strong>
+                </div>
+                <div class="metric">
+                  <span>Active Flight</span>
+                  <strong id="deviceActiveFlight">—</strong>
+                </div>
+                <div class="metric">
+                  <span>Cache Files</span>
+                  <strong id="deviceCacheFiles">—</strong>
+                </div>
+              </div>
+              <div id="syncLog" class="sync-log" style="display:none;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast is-hidden"></div>
+
+  <!-- Status change modal -->
+  <div class="modal-overlay" id="statusModal" style="display:none;z-index:200;">
+    <div class="modal">
+      <div class="modal__header">
+        <h3 id="statusModalTitle">Đổi trạng thái</h3>
+        <button class="modal__close" id="statusModalClose">✕</button>
+      </div>
+      <div class="modal__body">
+        <div class="field">
+          <label class="label" for="statusModalSelect">Trạng thái mới</label>
+          <select class="select" id="statusModalSelect"></select>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button class="btn btn--ghost" id="statusModalCancel">Hủy</button>
+        <button class="btn btn--primary" id="statusModalConfirm">Xác nhận</button>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: #11130d;
+      border: 1px solid var(--border);
+      width: 90%; max-width: 400px;
+      overflow: hidden;
+    }
+    .modal__header {
+      padding: var(--sp-5);
+      background: var(--panel-strong);
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal__body { padding: var(--sp-5); }
+    .modal__footer {
+      padding: var(--sp-4) var(--sp-5);
+      border-top: 1px solid var(--border);
+      display: flex; gap: var(--sp-3); justify-content: flex-end;
+    }
+    .modal__close {
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: 1.2rem; padding: 4px;
+    }
+  </style>
+
+  <script type="module">
+    // ============================================================
+    // API
+    // ============================================================
+    const API_BASE = window.__API_BASE__ || window.location.origin;
+    let ADMIN_TOKEN = localStorage.getItem("aiot_admin_token") || null;
+
+    async function adminRequest(path, options = {}) {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}),
+        ...(options.headers || {}),
+      };
+      const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+      const text = await response.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch {}
+      if (!response.ok) {
+        const msg = data?.detail || `HTTP ${response.status}`;
+        const err = new Error(msg);
+        err.status = response.status;
+        throw err;
+      }
+      return data;
+    }
+
+    // Stats
+    async function fetchStats() { return adminRequest("/api/admin/stats"); }
+    async function fetchFlights(filters = {}) {
+      const params = new URLSearchParams();
+      if (filters.status) params.set("status", filters.status);
+      if (filters.date) params.set("date", filters.date);
+      if (filters.search) params.set("search", filters.search);
+      return adminRequest("/api/admin/flights?" + params.toString());
+    }
+    async function fetchBookings(filters = {}) {
+      const params = new URLSearchParams();
+      if (filters.flight_id) params.set("flight_id", filters.flight_id);
+      if (filters.status) params.set("status", filters.status);
+      if (filters.payment_status) params.set("payment_status", filters.payment_status);
+      if (filters.face_registered !== undefined && filters.face_registered !== "")
+        params.set("face_registered", filters.face_registered);
+      return adminRequest("/api/admin/bookings?" + params.toString());
+    }
+    async function updateFlightStatus(id, status) {
+      return adminRequest(`/api/admin/flights/${id}/status`, {
+        method: "PATCH", body: JSON.stringify({ status }),
+      });
+    }
+    async function deleteFlight(id) {
+      return adminRequest(`/api/admin/flights/${id}`, { method: "DELETE" });
+    }
+    async function restoreFlight(id) {
+      return adminRequest(`/api/admin/flights/${id}/restore`, { method: "PATCH" });
+    }
+    async function updateBookingStatus(id, status) {
+      return adminRequest(`/api/admin/bookings/${id}/status`, {
+        method: "PATCH", body: JSON.stringify({ status }),
+      });
+    }
+    async function deleteFaceRegistration(bookingId) {
+      return adminRequest(`/api/admin/bookings/${bookingId}/face`, { method: "DELETE" });
+    }
+    async function fetchRegisteredFlights() { return adminRequest("/api/admin/sync/registered-flights"); }
+    async function triggerSync(payload) {
+      return adminRequest("/api/admin/sync/trigger", {
+        method: "POST", body: JSON.stringify(payload),
+      });
+    }
+    async function checkSyncStatus() { return adminRequest("/api/admin/sync/status"); }
+    async function runFlightStatusUpdate() { return adminRequest("/api/admin/flight-status/update", { method: "POST" }); }
+
+    // ============================================================
+    // Helpers
+    // ============================================================
+    function toast(msg, type = "info", duration = 3500) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.className = `toast is-${type}`;
+      el.style.display = "block";
+      clearTimeout(el._timer);
+      el._timer = setTimeout(() => { el.style.display = "none"; }, duration);
+    }
+
+    function formatVND(amount) {
+      if (amount == null) return "—";
+      return new Intl.NumberFormat("vi-VN").format(Math.round(amount)) + " ₫";
+    }
+    function formatDate(d) {
+      if (!d) return "—";
+      try {
+        return new Date(d).toLocaleDateString("vi-VN", { day: "2-digit", month: "short", year: "numeric" });
+      } catch { return d; }
+    }
+    function formatTime(t) {
+      if (!t) return "—";
+      return String(t).substring(0, 5);
+    }
+
+    function flightStatusBadge(status) {
+      const map = {
+        scheduled: '<span class="badge badge--muted">Scheduled</span>',
+        boarding: '<span class="badge badge--warn">Boarding</span>',
+        departed: '<span class="badge badge--signal">Departed</span>',
+        arrived: '<span class="badge badge--ok">Arrived</span>',
+        cancelled: '<span class="badge badge--danger">Cancelled</span>',
+      };
+      return map[status] || `<span class="badge badge--muted">${status}</span>`;
+    }
+
+    function bookingStatusBadge(status) {
+      const map = {
+        pending: '<span class="badge badge--warn">Pending</span>',
+        confirmed: '<span class="badge badge--ok">Confirmed</span>',
+        checked_in: '<span class="badge badge--accent">Checked-in</span>',
+        cancelled: '<span class="badge badge--danger">Cancelled</span>',
+        refunded: '<span class="badge badge--muted">Refunded</span>',
+      };
+      return map[status] || `<span class="badge badge--muted">${status}</span>`;
+    }
+
+    function paymentBadge(status) {
+      return status === "paid"
+        ? '<span class="badge badge--ok">Paid</span>'
+        : '<span class="badge badge--warn">Unpaid</span>';
+    }
+
+    // ============================================================
+    // Pagination
+    // ============================================================
+    const PAGE_SIZE = 20;
+    let _flightsAll = [], _bookingsAll = [];
+
+    function paginate(data, page, size = PAGE_SIZE) {
+      const start = (page - 1) * size;
+      return data.slice(start, start + size);
+    }
+    function renderPagination(total, page, onPage, containerInfo, containerBtns) {
+      const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      document.getElementById(containerInfo).textContent =
+        totalPages <= 1 ? `${total} kết quả` : `Trang ${page}/${totalPages} — ${total} kết quả`;
+      const btns = document.getElementById(containerBtns);
+      btns.innerHTML = "";
+      if (totalPages <= 1) return;
+      for (let p = Math.max(1, page - 2); p <= Math.min(totalPages, page + 2); p++) {
+        const b = document.createElement("button");
+        b.className = `btn btn--ghost btn--sm${p === page ? " is-active" : ""}`;
+        b.style.cssText = p === page ? "border-color:var(--signal);color:var(--signal);" : "";
+        b.textContent = p;
+        b.addEventListener("click", () => onPage(p));
+        btns.appendChild(b);
+      }
+    }
+
+    // ============================================================
+    // Auth
+    // ============================================================
+    async function adminLogin(email, password) {
+      const res = await fetch(`${API_BASE}/api/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Login failed");
+      return data;
+    }
+
+    function showAdmin(token) {
+      ADMIN_TOKEN = token;
+      localStorage.setItem("aiot_admin_token", token);
+      document.getElementById("loginSection").style.display = "none";
+      document.getElementById("adminBar").style.display = "flex";
+      document.getElementById("adminMain").style.display = "block";
+      loadDashboard();
+    }
+
+    function hideAdmin() {
+      ADMIN_TOKEN = null;
+      localStorage.removeItem("aiot_admin_token");
+      document.getElementById("loginSection").style.display = "flex";
+      document.getElementById("adminBar").style.display = "none";
+      document.getElementById("adminMain").style.display = "none";
+      document.querySelectorAll(".admin-section").forEach(s => s.classList.remove("is-active"));
+      document.querySelectorAll(".admin-bar__nav-btn").forEach(b => b.classList.remove("is-active"));
+      document.getElementById("dashboardSection").classList.add("is-active");
+      document.querySelector("[data-tab='dashboard']").classList.add("is-active");
+    }
+
+    if (ADMIN_TOKEN) {
+      showAdmin(ADMIN_TOKEN);
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("loginBtn");
+      const email = document.getElementById("loginEmail").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      const errEl = document.getElementById("loginError");
+      errEl.style.display = "none";
+      btn.disabled = true;
+      btn.textContent = "Đang đăng nhập…";
+      try {
+        const data = await adminLogin(email, password);
+        showAdmin(data.access_token);
+        toast("Đăng nhập thành công!", "success");
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Đăng nhập";
+      }
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", hideAdmin);
+
+    // ============================================================
+    // Tab navigation
+    // ============================================================
+    document.querySelectorAll(".admin-bar__nav-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll(".admin-bar__nav-btn").forEach(b => b.classList.remove("is-active"));
+        btn.classList.add("is-active");
+        document.querySelectorAll(".admin-section").forEach(s => s.classList.remove("is-active"));
+        document.getElementById(`${tab}Section`).classList.add("is-active");
+        if (tab === "flights") loadFlights();
+        else if (tab === "bookings") loadBookings();
+        else if (tab === "sync") loadSync();
+        else if (tab === "dashboard") loadDashboard();
+      });
+    });
+
+    // ============================================================
+    // Dashboard
+    // ============================================================
+    async function loadDashboard() {
+      try {
+        const stats = await fetchStats();
+        document.getElementById("statFlights").textContent = stats.total_flights;
+        document.getElementById("statFlightsToday").textContent = `${stats.flights_today} hôm nay`;
+        document.getElementById("statBookings").textContent = stats.total_bookings;
+        document.getElementById("statCheckins").textContent = `${stats.checked_in} đã check-in (${stats.checkin_rate}%)`;
+        document.getElementById("statRevenue").textContent = formatVND(stats.total_revenue);
+        document.getElementById("statUsers").textContent = stats.total_users;
+        document.getElementById("statFaces").textContent = `${stats.face_registered} khuôn mặt đã đăng ký`;
+      } catch (e) {
+        toast("Không tải được dashboard: " + e.message, "error");
+      }
+
+      // Recent flights
+      try {
+        const flights = await fetchFlights({});
+        _flightsAll = flights;
+        const recent = flights.slice(0, 5);
+        const tbody = document.getElementById("recentFlightsBody");
+        if (!recent.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:var(--sp-6);">Không có chuyến bay nào</td></tr>';
+          return;
+        }
+        tbody.innerHTML = recent.map(f => `
+          <tr>
+            <td class="mono">${f.flight_number}</td>
+            <td><span class="route-code">${f.origin_code}</span> <span class="route-arrow">→</span> <span class="route-code">${f.dest_code}</span></td>
+            <td>${formatDate(f.flight_date)}</td>
+            <td class="mono">${formatTime(f.departure_time)}</td>
+            <td>${flightStatusBadge(f.status)}</td>
+            <td class="mono">${f.booking_count}</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        toast("Không tải được danh sách chuyến bay: " + e.message, "error");
+      }
+    }
+
+    document.getElementById("refreshStatsBtn").addEventListener("click", loadDashboard);
+
+    document.getElementById("runFlightStatusBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("runFlightStatusBtn");
+      const result = document.getElementById("flightStatusResult");
+      btn.disabled = true;
+      btn.textContent = "Đang chạy…";
+      result.textContent = "";
+      try {
+        const res = await runFlightStatusUpdate();
+        result.textContent = `Đã cập nhật: ${res.departed} departed, ${res.arrived} arrived`;
+        if (res.departed === 0 && res.arrived === 0) result.textContent = "Không có chuyến bay nào cần cập nhật";
+        toast("Cập nhật trạng thái thành công!", "success");
+        loadDashboard();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Chạy cập nhật trạng thái";
+      }
+    });
+
+    // --- Clear DB ---
+    document.getElementById("clearDbBtn").addEventListener("click", async () => {
+      if (!confirm("Xóa TOÀN BỘ dữ liệu trong SQLite prototype DB?\n\nHành động này không thể hoàn tác!")) return;
+      const btn = document.getElementById("clearDbBtn");
+      const result = document.getElementById("dbOperationResult");
+      btn.disabled = true;
+      btn.textContent = "Đang xóa…";
+      result.textContent = "";
+      try {
+        const res = await adminRequest("/api/admin/db/clear", { method: "POST" });
+        const total = Object.values(res.cleared).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0);
+        result.textContent = `Đã xóa ${total} rows từ ${Object.keys(res.cleared).length} tables`;
+        toast(`Đã xóa ${total} rows!`, "success");
+        loadDashboard();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+        result.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Clear DB";
+      }
+    });
+
+    // --- Seed DB ---
+    document.getElementById("seedDbBtn").addEventListener("click", async () => {
+      if (!confirm("Clear toàn bộ dữ liệu và tạo lại data mẫu?\n\nHành động này không thể hoàn tác!")) return;
+      const btn = document.getElementById("seedDbBtn");
+      const result = document.getElementById("dbOperationResult");
+      btn.disabled = true;
+      btn.textContent = "Đang seed…";
+      result.textContent = "Đang xóa và tạo lại data…";
+      try {
+        const res = await adminRequest("/api/admin/db/seed", { method: "POST" });
+        const byStatus = Object.entries(res)
+          .filter(([k]) => ["scheduled","boarding","departed","arrived","cancelled"].includes(k))
+          .map(([k,v]) => `${k}: ${v}`)
+          .join(" · ") || `tổng: ${Object.values(res).reduce((s,v)=>s+(typeof v==="number"?v:0),0)}`;
+        result.textContent = `${Object.values(res).reduce((s,v)=>s+(typeof v==="number"?v:0),0)} flights · ${byStatus}`;
+        toast("Seed database thành công!", "success");
+        loadDashboard();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+        result.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Seed DB";
+      }
+    });
+
+    // ============================================================
+    // Flights
+    // ============================================================
+    let _flightPage = 1;
+    let _flightFilters = {};
+
+    async function loadFlights() {
+      try {
+        _flightsAll = await fetchFlights(_flightFilters);
+        renderFlightsPage(_flightPage);
+      } catch (e) {
+        document.getElementById("flightsBody").innerHTML =
+          `<tr><td colspan="10" style="text-align:center;color:var(--danger);padding:var(--sp-6);">Lỗi: ${e.message}</td></tr>`;
+      }
+    }
+
+    function renderFlightsPage(page) {
+      _flightPage = page;
+      const pageData = paginate(_flightsAll, page);
+      const tbody = document.getElementById("flightsBody");
+      if (!pageData.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:var(--sp-6);">Không có kết quả</td></tr>';
+        renderPagination(0, 1, p => renderFlightsPage(p), "flightsPaginationInfo", "flightsPaginationBtns");
+        return;
+      }
+      tbody.innerHTML = pageData.map(f => {
+        const deleted = !!f.deleted_at;
+        return `
+          <tr class="${deleted ? "row-deleted" : ""}">
+            <td>
+              <button class="expand-btn" data-expand="flight-${f.id}" title="Xem đặt vé" onclick="window._toggleFlightExpand(${f.id})">
+                <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </td>
+            <td class="mono">${f.id}</td>
+            <td class="mono" style="font-weight:700;">${f.flight_number}</td>
+            <td><span class="route-code">${f.origin_code}</span> <span class="route-arrow">→</span> <span class="route-code">${f.dest_code}</span><br><span style="font-size:var(--text-xs);color:var(--muted);">${f.origin_city} → ${f.dest_city}</span></td>
+            <td>${formatDate(f.flight_date)}</td>
+            <td class="mono">${formatTime(f.departure_time)}</td>
+            <td>${flightStatusBadge(f.status)}</td>
+            <td class="mono">${f.booking_count} <span style="color:var(--muted);">/${f.total_seats}</span></td>
+            <td class="mono">${f.available_seats}</td>
+            <td>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <button class="btn btn--ghost btn--sm" onclick="window._openStatusModal('flight', ${f.id}, '${f.status}')" title="Đổi trạng thái">Status</button>
+                ${f.face_registered_count > 0 ? `<span class="badge badge--ok" style="font-size:10px;">${f.face_registered_count}mặt</span>` : ""}
+                ${deleted
+                  ? `<button class="btn btn--ghost btn--sm" onclick="window._restoreFlight(${f.id})">Restore</button>`
+                  : `<button class="btn btn--ghost btn--sm" style="color:var(--danger);" onclick="window._deleteFlight(${f.id})">Xóa</button>`
+                }
+              </div>
+            </td>
+          </tr>
+          <tr id="expand-flight-${f.id}" style="display:none;" class="row-expanded">
+            <td colspan="10">
+              <div class="expanded-content">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-3);">
+                  <strong style="font-family:'JetBrains Mono',monospace;">Đặt vé cho chuyến bay #${f.id}</strong>
+                  <button class="btn btn--ghost btn--sm" onclick="window._collapseFlightExpand(${f.id})">Đóng</button>
+                </div>
+                <div id="expand-flight-content-${f.id}" style="color:var(--muted);">Đang tải…</div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      renderPagination(_flightsAll.length, page, p => renderFlightsPage(p), "flightsPaginationInfo", "flightsPaginationBtns");
+    }
+
+    window._toggleFlightExpand = async function(id) {
+      const row = document.getElementById(`expand-flight-${id}`);
+      const btn = document.querySelector(`[data-expand="flight-${id}"]`);
+      if (row.style.display === "table-row") {
+        row.style.display = "none";
+        btn.classList.remove("is-open");
+        return;
+      }
+      row.style.display = "table-row";
+      btn.classList.add("is-open");
+      try {
+        const detail = await adminRequest(`/api/admin/flights/${id}`);
+        const bookings = detail.bookings || [];
+        const content = document.getElementById(`expand-flight-content-${id}`);
+        if (!bookings.length) {
+          content.innerHTML = '<p style="color:var(--muted);">Chưa có đặt vé nào</p>';
+          return;
+        }
+        content.innerHTML = `
+          <table class="data-table" style="font-size:var(--text-xs);">
+            <thead><tr><th>Mã đặt</th><th>Hành khách</th><th>Email</th><th>Ghế</th><th>Trạng thái</th><th>Thanh toán</th><th>Mặt</th></tr></thead>
+            <tbody>
+              ${bookings.map(b => `
+                <tr>
+                  <td class="mono">${b.booking_code}</td>
+                  <td>${b.passenger_name}</td>
+                  <td>${b.passenger_email || "—"}</td>
+                  <td class="mono">${b.seat_number || "—"}</td>
+                  <td>${bookingStatusBadge(b.status)}</td>
+                  <td>${paymentBadge(b.payment_status)}</td>
+                  <td>${b.face_registered ? "✓" : "—"}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        document.getElementById(`expand-flight-content-${id}`).innerHTML =
+          `<p style="color:var(--danger);">Lỗi: ${e.message}</p>`;
+      }
+    };
+
+    window._collapseFlightExpand = function(id) {
+      const row = document.getElementById(`expand-flight-${id}`);
+      const btn = document.querySelector(`[data-expand="flight-${id}"]`);
+      row.style.display = "none";
+      btn.classList.remove("is-open");
+    };
+
+    window._openStatusModal = function(type, id, currentStatus) {
+      const statuses = type === "flight"
+        ? ["scheduled", "boarding", "departed", "arrived", "cancelled"]
+        : ["pending", "confirmed", "checked_in", "cancelled", "refunded"];
+      const modal = document.getElementById("statusModal");
+      const select = document.getElementById("statusModalSelect");
+      const title = document.getElementById("statusModalTitle");
+      title.textContent = `Đổi trạng thái ${type === "flight" ? "chuyến bay" : "đặt vé"} #${id}`;
+      select.innerHTML = statuses.map(s => `<option value="${s}"${s === currentStatus ? " selected" : ""}>${s}</option>`).join("");
+      modal.style.display = "flex";
+      modal._type = type;
+      modal._id = id;
+    };
+
+    function closeStatusModal() {
+      document.getElementById("statusModal").style.display = "none";
+    }
+    document.getElementById("statusModalClose").addEventListener("click", closeStatusModal);
+    document.getElementById("statusModalCancel").addEventListener("click", closeStatusModal);
+    document.getElementById("statusModal").addEventListener("click", e => {
+      if (e.target === e.currentTarget) closeStatusModal();
+    });
+
+    document.getElementById("statusModalConfirm").addEventListener("click", async () => {
+      const modal = document.getElementById("statusModal");
+      const select = document.getElementById("statusModalSelect");
+      const type = modal._type;
+      const id = modal._id;
+      const newStatus = select.value;
+      const btn = document.getElementById("statusModalConfirm");
+      btn.disabled = true;
+      btn.textContent = "Đang cập nhật…";
+      try {
+        if (type === "flight") {
+          await updateFlightStatus(id, newStatus);
+          toast("Cập nhật trạng thái chuyến bay thành công!", "success");
+          loadFlights();
+        } else {
+          await updateBookingStatus(id, newStatus);
+          toast("Cập nhật trạng thái đặt vé thành công!", "success");
+          loadBookings();
+        }
+        closeStatusModal();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Xác nhận";
+      }
+    });
+
+    window._deleteFlight = async function(id) {
+      if (!confirm(`Xóa chuyến bay #${id}?`)) return;
+      try {
+        await deleteFlight(id);
+        toast("Đã xóa chuyến bay!", "success");
+        loadFlights();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      }
+    };
+
+    window._restoreFlight = async function(id) {
+      try {
+        await restoreFlight(id);
+        toast("Đã khôi phục chuyến bay!", "success");
+        loadFlights();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      }
+    };
+
+    document.getElementById("applyFlightFilters").addEventListener("click", () => {
+      _flightFilters = {
+        search: document.getElementById("flightSearch").value.trim(),
+        status: document.getElementById("flightStatusFilter").value,
+        date: document.getElementById("flightDateFilter").value,
+      };
+      _flightPage = 1;
+      loadFlights();
+    });
+
+    document.getElementById("clearFlightFilters").addEventListener("click", () => {
+      document.getElementById("flightSearch").value = "";
+      document.getElementById("flightStatusFilter").value = "";
+      document.getElementById("flightDateFilter").value = "";
+      _flightFilters = {};
+      _flightPage = 1;
+      loadFlights();
+    });
+
+    document.getElementById("refreshFlightsBtn").addEventListener("click", loadFlights);
+
+    // ============================================================
+    // Bookings
+    // ============================================================
+    let _bookingPage = 1;
+    let _bookingFilters = {};
+
+    async function loadBookings() {
+      try {
+        _bookingsAll = await fetchBookings(_bookingFilters);
+        renderBookingsPage(_bookingPage);
+      } catch (e) {
+        document.getElementById("bookingsBody").innerHTML =
+          `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:var(--sp-6);">Lỗi: ${e.message}</td></tr>`;
+      }
+    }
+
+    function renderBookingsPage(page) {
+      _bookingPage = page;
+      const pageData = paginate(_bookingsAll, page);
+      const tbody = document.getElementById("bookingsBody");
+      if (!pageData.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:var(--sp-6);">Không có kết quả</td></tr>';
+        renderPagination(0, 1, p => renderBookingsPage(p), "bookingsPaginationInfo", "bookingsPaginationBtns");
+        return;
+      }
+      tbody.innerHTML = pageData.map(b => `
+        <tr>
+          <td class="mono">${b.id}</td>
+          <td class="mono" style="font-weight:700;">${b.booking_code}</td>
+          <td>
+            <div>${b.passenger_name}</div>
+            <div style="font-size:var(--text-xs);color:var(--muted);">${b.passenger_email || "—"}</div>
+          </td>
+          <td>
+            <span class="mono">${b.flight_number}</span>
+            <div style="font-size:var(--text-xs);color:var(--muted);">${b.origin_code} → ${b.dest_code}</div>
+          </td>
+          <td class="mono">${b.seat_number || "—"}</td>
+          <td>${bookingStatusBadge(b.status)}</td>
+          <td>${paymentBadge(b.payment_status)}</td>
+          <td>${b.face_registered ? '<span class="badge badge--ok">✓</span>' : '<span style="color:var(--muted);">—</span>'}</td>
+          <td>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <button class="btn btn--ghost btn--sm" onclick="window._openStatusModal('booking', ${b.id}, '${b.status}')">Status</button>
+              ${b.face_registered ? `<button class="btn btn--ghost btn--sm" style="color:var(--danger);" onclick="window._deleteFace(${b.id})">Xóa mặt</button>` : ""}
+            </div>
+          </td>
+        </tr>
+      `).join("");
+      renderPagination(_bookingsAll.length, page, p => renderBookingsPage(p), "bookingsPaginationInfo", "bookingsPaginationBtns");
+    }
+
+    window._deleteFace = async function(bookingId) {
+      if (!confirm("Xóa đăng ký khuôn mặt của đặt vé này?")) return;
+      try {
+        await deleteFaceRegistration(bookingId);
+        toast("Đã xóa đăng ký khuôn mặt!", "success");
+        loadBookings();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      }
+    };
+
+    document.getElementById("applyBookingFilters").addEventListener("click", () => {
+      _bookingFilters = {
+        flight_id: document.getElementById("bookingFlightFilter").value || undefined,
+        status: document.getElementById("bookingStatusFilter").value,
+        payment_status: document.getElementById("bookingPaymentFilter").value,
+        face_registered: document.getElementById("bookingFaceFilter").value,
+      };
+      _bookingPage = 1;
+      loadBookings();
+    });
+
+    document.getElementById("clearBookingFilters").addEventListener("click", () => {
+      document.getElementById("bookingFlightFilter").value = "";
+      document.getElementById("bookingStatusFilter").value = "";
+      document.getElementById("bookingPaymentFilter").value = "";
+      document.getElementById("bookingFaceFilter").value = "";
+      _bookingFilters = {};
+      _bookingPage = 1;
+      loadBookings();
+    });
+
+    document.getElementById("refreshBookingsBtn").addEventListener("click", loadBookings);
+
+    // ============================================================
+    // Edge Sync
+    // ============================================================
+    let _syncSelectedFlights = new Set();
+
+    async function loadSync() {
+      // Check device status
+      checkDeviceStatus();
+
+      // Load registered flights
+      try {
+        const flights = await fetchRegisteredFlights();
+        const container = document.getElementById("registeredFlightsCheckboxes");
+        _syncSelectedFlights.clear();
+        updateSyncButtonState();
+
+        if (!flights.length) {
+          container.innerHTML = '<p style="color:var(--muted);padding:var(--sp-4);">Không có chuyến bay nào đã đăng ký khuôn mặt</p>';
+          return;
+        }
+
+        container.innerHTML = flights.map(f => `
+          <label class="flight-check-item">
+            <input type="checkbox" value="${f.id}" onchange="window._toggleSyncFlight(this)" />
+            <div class="flight-check-item__info">
+              <div class="flight-check-item__route">${f.flight_number} · ${f.origin_code} → ${f.dest_code}</div>
+              <div class="flight-check-item__meta">${formatDate(f.flight_date)} · ${formatTime(f.departure_time)}</div>
+            </div>
+            <div class="flight-check-item__faces">${f.face_count} mặt</div>
+            <button class="btn btn--ghost btn--sm" style="margin-left:auto;padding:0 8px;min-height:28px;font-size:10px;border-color:var(--danger);color:var(--danger);"
+              onclick="event.preventDefault();event.stopPropagation();window._deleteEdgeCache(${f.id})"
+              title="Xóa cache file trên edge">Xóa cache</button>
+          </label>
+        `).join("");
+      } catch (e) {
+        document.getElementById("registeredFlightsCheckboxes").innerHTML =
+          `<p style="color:var(--danger);padding:var(--sp-4);">Lỗi tải danh sách: ${e.message}</p>`;
+      }
+    }
+
+    window._toggleSyncFlight = function(cb) {
+      const id = parseInt(cb.value);
+      if (cb.checked) _syncSelectedFlights.add(id);
+      else _syncSelectedFlights.delete(id);
+      updateSyncButtonState();
+    };
+
+    function updateSyncButtonState() {
+      const btn = document.getElementById("syncSelectedBtn");
+      const count = _syncSelectedFlights.size;
+      btn.disabled = count === 0;
+      document.getElementById("selectedFlightCount").textContent =
+        count > 0 ? `${count} chuyến bay đã chọn` : "";
+    }
+
+    // --- Delete All Cache ---
+    document.getElementById("deleteAllCacheBtn").addEventListener("click", async () => {
+      if (!confirm("Xóa TẤT CẢ cache files trên edge device?\n\nThao tác này không thể hoàn tác!")) return;
+      const btn = document.getElementById("deleteAllCacheBtn");
+      const logEl = document.getElementById("syncLog");
+      btn.disabled = true;
+      btn.textContent = "Đang xóa…";
+      logEl.style.display = "block";
+      logEl.textContent = "Đang kết nối và xóa cache trên edge…";
+      try {
+        const res = await adminRequest("/api/admin/sync/cache/all", { method: "DELETE" });
+        if (res.message) {
+          logEl.textContent = res.message;
+        } else {
+          logEl.textContent = `Đã xóa ${res.deleted_count} files:\n${res.deleted.join("\n")}`;
+          if (res.errors?.length) {
+            logEl.textContent += `\n\nLỗi:\n${res.errors.map(e => `${e.file}: ${e.error}`).join("\n")}`;
+          }
+        }
+        toast(`Đã xóa ${res.deleted_count} cache files!`, "success");
+        checkDeviceStatus();
+      } catch (e) {
+        logEl.textContent = "Lỗi: " + e.message;
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Delete All Cache";
+      }
+    });
+
+    async function checkDeviceStatus() {
+      const dot = document.getElementById("deviceStatusDot");
+      const host = document.getElementById("deviceHostDisplay");
+      dot.className = "status-dot status-dot--offline";
+      host.textContent = "Đang kết nối…";
+      try {
+        const status = await checkSyncStatus();
+        dot.className = "status-dot " + (status.connected ? "status-dot--online" : "status-dot--offline");
+        host.textContent = status.host;
+        document.getElementById("deviceProcess").textContent =
+          status.process ? "main.py đang chạy" : "main.py không chạy";
+        document.getElementById("deviceActiveFlight").textContent =
+          status.active_flight || "—";
+        document.getElementById("deviceCacheFiles").textContent =
+          status.cache_files?.length ? `${status.cache_files.length} files` : "Không có cache";
+      } catch (e) {
+        dot.className = "status-dot status-dot--offline";
+        host.textContent = "Không kết nối được";
+        document.getElementById("deviceProcess").textContent = "—";
+        document.getElementById("deviceActiveFlight").textContent = "—";
+        document.getElementById("deviceCacheFiles").textContent = "—";
+      }
+    }
+
+    document.getElementById("checkDeviceBtn").addEventListener("click", checkDeviceStatus);
+
+    document.getElementById("syncAllBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("syncAllBtn");
+      const logEl = document.getElementById("syncLog");
+      btn.disabled = true;
+      btn.textContent = "Đang sync…";
+      logEl.style.display = "block";
+      logEl.textContent = "Đang gửi lệnh sync all lên thiết bị…";
+      try {
+        const res = await triggerSync({ sync_all: true, mode: "direct" });
+        logEl.textContent = res.stdout || res.stderr || (res.success ? "Sync thành công!" : "Sync thất bại");
+        if (res.success) {
+          toast("Sync all thành công!", "success");
+          checkDeviceStatus();
+        } else {
+          toast("Sync thất bại: " + (res.stderr || res.detail), "error");
+        }
+      } catch (e) {
+        logEl.textContent = "Lỗi: " + e.message;
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Sync All (Flight 999999)";
+      }
+    });
+
+    document.getElementById("syncSelectedBtn").addEventListener("click", async () => {
+      if (_syncSelectedFlights.size === 0) return;
+      const mode = document.getElementById("syncModeSelect").value;
+      const btn = document.getElementById("syncSelectedBtn");
+      const logEl = document.getElementById("syncLog");
+      const ids = Array.from(_syncSelectedFlights);
+      btn.disabled = true;
+      btn.textContent = "Đang sync…";
+      logEl.style.display = "block";
+
+      for (const flightId of ids) {
+        logEl.textContent += `\n\nSyncing flight ${flightId}…`;
+        try {
+          const res = await triggerSync({ flight_id: flightId, mode });
+          logEl.textContent += `\n${res.stdout || res.stderr || (res.success ? "OK" : "FAILED")}`;
+        } catch (e) {
+          logEl.textContent += `\nError: ${e.message}`;
+        }
+      }
+
+      btn.disabled = false;
+      btn.textContent = "Sync đã chọn";
+      toast(`Đã sync ${ids.length} chuyến bay!`, "success");
+      checkDeviceStatus();
+    });
+
+    window._deleteEdgeCache = async function(flightId) {
+      if (!confirm(`Xóa cache file của chuyến bay #${flightId} trên edge device?`)) return;
+      try {
+        const res = await adminRequest(`/api/admin/sync/cache/${flightId}`, { method: "DELETE" });
+        if (res.cache_deleted) {
+          toast(`Đã xóa cache flight #${flightId} trên edge!`, "success");
+          checkDeviceStatus();
+        } else if (res.error) {
+          toast(`Không xóa được: ${res.error}`, "error");
+        } else {
+          toast(`Cache flight #${flightId} không tồn tại trên edge`, "info");
+        }
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      }
+    };
+  </script>
+</body>
+</html>
