@@ -11,7 +11,7 @@
   "enable_lcd": false,
   "device_secret_key": "d3v1c3_s3cr3t_ke",
   "stream_fps_limit": 15,
-  "stream_jpeg_quality": 90,
+  "stream_jpeg_quality": 75,
   "ai_frame_interval": 3,
   "recognition_frame_interval": 9,
   "overlay_cache_ttl_sec": 1.0,

@@ -421,6 +421,7 @@ def main():
     last_result = None  # Cache last match result to persist overlay
     overlay_cache = None
     recognition_cache = None
+    no_face_frames = 0  # Hysteresis frame counter to prevent HUD flickering
     # Throttle file I/O: only check disk-based flags/files at most once per second
     IO_CHECK_INTERVAL = 1.0
     last_io_check = 0.0
@@ -456,17 +457,24 @@ def main():
             if not draw_cached_overlay(img, overlay_cache, now):
                 overlay_cache = None
         else:
-            overlay_cache = None
-
             # --- Face detection ---
             objs = FACE_DET.detect(img, conf_th=DETECT_CONF, iou_th=DETECT_IOU)
 
             if len(objs) == 0:
-                ema_lm = None
-                last_result = None
-                recognition_cache = None
-                draw_status(img, "No face", image.COLOR_RED)
+                no_face_frames += 1
+                if no_face_frames >= 12:  # Grace period of 12 loops (~800ms) before clearing
+                    ema_lm = None
+                    last_result = None
+                    recognition_cache = None
+                    overlay_cache = None
+                    draw_status(img, "No face", image.COLOR_RED)
+                else:
+                    # Keep showing cached overlay during grace period
+                    if not draw_cached_overlay(img, overlay_cache, now):
+                        overlay_cache = None
+                        draw_status(img, "No face", image.COLOR_RED)
             else:
+                no_face_frames = 0
                 for obj in objs:
                     x, y, w, h = int(obj.x), int(obj.y), int(obj.w), int(obj.h)
                     crop_x = int(x + w / 2 - CROP_W / 2)
