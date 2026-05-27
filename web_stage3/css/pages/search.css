@@ -212,12 +212,35 @@
 
 /* --- Responsive --- */
 @media (max-width: 900px) {
-  .flight-card { grid-template-columns: 1fr auto; }
-  .flight-card__logo { display: none; }
+  .flight-card {
+    grid-template-columns: 1fr auto;
+    gap: var(--sp-4);
+  }
+  .flight-card__logo {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--sp-2);
+    min-width: unset;
+  }
+  .flight-card__logo-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .flight-card__logo-icon svg {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 @media (max-width: 680px) {
-  .flight-card { grid-template-columns: 1fr; gap: var(--sp-3); }
-  .flight-card__route { order: -1; }
-  .flight-card__price { align-items: flex-start; }
+  .flight-card {
+    grid-template-columns: 1fr;
+    gap: var(--sp-3);
+  }
+  .flight-card__price {
+    align-items: flex-start;
+  }
 }
+
