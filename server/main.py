@@ -8,6 +8,7 @@ from pathlib import Path
 from server.database import DB_PATH, init_db, iter_tables, USE_MYSQL
 from server.face_routes import router as face_router
 from server.routes import register_routes
+from server.seed import maintain_prototype_flights
 from server.vector_service import ensure_face_collection, get_vector_status
 
 
@@ -49,6 +50,8 @@ PAGE_ROUTES = {
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    if not USE_MYSQL:
+        maintain_prototype_flights()
 
 
 @app.get("/health")

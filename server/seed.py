@@ -11,7 +11,7 @@ from __future__ import annotations
 import random
 import secrets
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Add project root to path
@@ -168,6 +168,16 @@ def _generate_flight_number(origin: str, seq: int) -> str:
     return f"{prefix}{seq % 9000 + 1000}"
 
 
+def _generate_unique_flight_number() -> str:
+    """Generate a unique prototype flight number."""
+    for _ in range(200):
+        prefix = random.choice(["VN", "VJ", "QH", "BL"])
+        flight_number = f"{prefix}{random.randint(1000, 9999)}"
+        if not _fetch_one("SELECT id FROM flights WHERE flight_number = ?", (flight_number,)):
+            return flight_number
+    return f"VN{secrets.randbelow(900000) + 100000}"
+
+
 # ---------------------------------------------------------------------------
 # Seed steps
 # ---------------------------------------------------------------------------
@@ -270,29 +280,40 @@ def seed_schedules() -> int:
     return count
 
 
-def seed_flights() -> int:
-    """Generate flights for the next N days for each active schedule."""
-    days_ahead = 14
-    today = date.today()
+def seed_flights(days_ahead: int = 14, start_date: date | None = None) -> int:
+    """Generate missing flights for the next N days for each active schedule."""
+    today = start_date or date.today()
     count = 0
 
-    schedules = _fetch_all("SELECT * FROM schedules")
-    flight_seq = 1000  # start from VN1001
+    schedules = _fetch_all(
+        """
+        SELECT s.*, p.total_seats
+        FROM schedules s
+        JOIN planes p ON p.id = s.plane_id
+        """
+    )
     for sched in schedules:
         s_id = sched["id"]
-        base_price = float(sched["base_price"] or 0)
+        total_seats = int(sched.get("total_seats") or 180)
 
         for day_offset in range(days_ahead):
             flight_date = today + timedelta(days=day_offset)
+            departure_time = str(sched.get("departure_time") or "")
+            if flight_date == date.today() and departure_time <= datetime.now().strftime("%H:%M:%S"):
+                continue
 
-            # Build unique flight number
-            flight_seq += 1
-            prefix = random.choice(["VN", "VJ", "QH", "BL"])
-            flight_num = f"{prefix}{flight_seq}"
+            existing = _fetch_one(
+                "SELECT id FROM flights WHERE schedule_id = ? AND flight_date = ?",
+                (s_id, str(flight_date)),
+            )
+            if existing:
+                continue
 
-            # Vary price slightly by day
+            flight_num = _generate_unique_flight_number()
+
             multiplier = round(random.uniform(0.9, 1.25), 2)
-            avail_seats = int(sched["plane_id"] * 10 + random.randint(20, 150))
+            booked_preview = random.randint(0, min(35, max(0, total_seats - 1)))
+            avail_seats = max(1, total_seats - booked_preview)
 
             _execute(
                 """
@@ -306,6 +327,52 @@ def seed_flights() -> int:
 
     print(f"  [OK]   flights: {count} rows ({days_ahead} days × {len(schedules)} schedules)")
     return count
+
+
+def cleanup_old_flights(now: datetime | None = None) -> int:
+    """Delete past prototype flights that have no bookings attached."""
+    now = now or datetime.now()
+    today = now.date().isoformat()
+    current_time = now.strftime("%H:%M:%S")
+    rows = _fetch_all(
+        """
+        SELECT fl.id
+        FROM flights fl
+        JOIN schedules s ON s.id = fl.schedule_id
+        LEFT JOIN bookings b ON b.flight_id = fl.id
+        WHERE b.id IS NULL
+          AND (
+            fl.flight_date < ?
+            OR (fl.flight_date = ? AND s.departure_time <= ?)
+          )
+        """,
+        (today, today, current_time),
+    )
+    ids = [int(row["id"]) for row in rows]
+    if not ids:
+        print("  [SKIP] old flights - none to delete")
+        return 0
+
+    deleted = 0
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        _execute(f"DELETE FROM seat_holds WHERE flight_id IN ({placeholders})", tuple(chunk))
+        deleted += _execute(f"DELETE FROM flights WHERE id IN ({placeholders})", tuple(chunk))
+
+    print(f"  [OK]   old flights deleted: {deleted} rows")
+    return deleted
+
+
+def maintain_prototype_flights(days_ahead: int = 14) -> dict[str, int]:
+    """Keep SQLite prototype data fresh on server startup."""
+    seed_airports()
+    seed_planes()
+    seed_routes()
+    seed_schedules()
+    deleted = cleanup_old_flights()
+    created = seed_flights(days_ahead=days_ahead)
+    return {"deleted": deleted, "created": created}
 
 
 # ---------------------------------------------------------------------------

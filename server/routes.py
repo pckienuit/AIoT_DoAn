@@ -282,6 +282,9 @@ def search_flights(
     flight_date: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
     passengers: Annotated[int, Query(ge=1, le=9)] = 1,
 ) -> list[dict[str, Any]]:
+    now = datetime.now()
+    today = now.date().isoformat()
+    current_time = now.strftime("%H:%M:%S")
     q = """
         SELECT
             fl.id,
@@ -311,8 +314,12 @@ def search_flights(
         JOIN planes   p   ON p.id = s.plane_id
         WHERE fl.status IN ('scheduled', 'boarding')
           AND fl.available_seats >= ?
+          AND (
+            fl.flight_date > ?
+            OR (fl.flight_date = ? AND s.departure_time > ?)
+          )
     """
-    params: list[Any] = [passengers]
+    params: list[Any] = [passengers, today, today, current_time]
 
     if origin:
         q += " AND a_o.code = ?"
@@ -324,7 +331,7 @@ def search_flights(
         q += " AND fl.flight_date = ?"
         params.append(flight_date)
 
-    q += " ORDER BY s.departure_time ASC"
+    q += " ORDER BY fl.flight_date ASC, s.departure_time ASC"
 
     rows = _fetch_all(q, tuple(params))
     for row in rows:
