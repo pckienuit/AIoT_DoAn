@@ -37,8 +37,7 @@ async function encryptVectorAESGCM(vector) {
   const key = await getAESKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = new Float32Array(vector);
-  const encoded = new TextEncoder().encode(String.fromCharCode(...new Uint8Array(data.buffer)));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data.buffer);
   return {
     ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
     iv: btoa(String.fromCharCode(...iv)),
