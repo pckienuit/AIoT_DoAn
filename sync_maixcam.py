@@ -76,6 +76,7 @@ def upload_test_cache(
     client: paramiko.SSHClient,
     test_flight_id: int,
     items: list[dict],
+    flight_status: str = "scheduled",
 ) -> None:
     cache_entry = {
         "flight_id": int(test_flight_id),
@@ -83,6 +84,8 @@ def upload_test_cache(
         "count": len(items),
         "items": items,
         "test_all_faces": True,
+        "status": flight_status,
+        "recognition_allowed": flight_status not in ("departed", "arrived", "cancelled"),
     }
 
     sftp = client.open_sftp()
@@ -112,6 +115,8 @@ def sync_all_faces_to_test_cache(
 
     print("[all] Registered face flight IDs:", flight_ids)
     all_items = []
+    combined_status = "scheduled"
+
     for flight_id in flight_ids:
         print("[all] Fetching flight {} from server...".format(flight_id))
         payload = fetch_sync_payload(server_url, flight_id, timeout)
@@ -119,7 +124,12 @@ def sync_all_faces_to_test_cache(
         print("[all]   {} embeddings".format(len(items)))
         all_items.extend(items)
 
-    upload_test_cache(client, test_flight_id, all_items)
+        # Propagate departed/arrived/cancelled to test cache so recognition is blocked
+        status = payload.get("status", "scheduled")
+        if status in ("departed", "arrived", "cancelled"):
+            combined_status = status
+
+    upload_test_cache(client, test_flight_id, all_items, combined_status)
     rc, out = ssh_run(client, "echo {} > /root/active_flight.txt".format(int(test_flight_id)))
     if rc != 0:
         raise RuntimeError(out or "Failed to set test active flight")
@@ -128,7 +138,9 @@ def sync_all_faces_to_test_cache(
         len(all_items),
         int(test_flight_id),
     ))
-    print("[all] Active flight set to test cache {}".format(int(test_flight_id)))
+    print("[all] Active flight set to test cache {} (status: {})".format(
+        int(test_flight_id), combined_status,
+    ))
 
 
 def trigger_flag_sync(client: paramiko.SSHClient, flight_id: int | None, wait_sec: int) -> None:

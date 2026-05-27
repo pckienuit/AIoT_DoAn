@@ -312,6 +312,9 @@ def search_flights(
 ) -> list[dict[str, Any]]:
     now = datetime.now()
     today = now.date().isoformat()
+    # Allow lookup within 5 minutes after departure
+    grace_minutes = 5
+    grace_deadline = (now - timedelta(minutes=grace_minutes)).strftime("%H:%M:%S")
     current_time = now.strftime("%H:%M:%S")
     q = """
         SELECT
@@ -340,14 +343,15 @@ def search_flights(
         JOIN airports a_o ON a_o.id = r.origin_id
         JOIN airports a_d ON a_d.id = r.destination_id
         JOIN planes   p   ON p.id = s.plane_id
-        WHERE fl.status IN ('scheduled', 'boarding')
+        WHERE fl.deleted_at IS NULL
+          AND fl.status IN ('scheduled', 'boarding', 'departed')
           AND fl.available_seats >= ?
           AND (
             fl.flight_date > ?
-            OR (fl.flight_date = ? AND s.departure_time > ?)
+            OR (fl.flight_date = ? AND s.departure_time >= ?)
           )
     """
-    params: list[Any] = [passengers, today, today, current_time]
+    params: list[Any] = [passengers, today, today, grace_deadline]
 
     if origin:
         q += " AND a_o.code = ?"
@@ -404,13 +408,79 @@ def get_flight(flight_id: int) -> dict[str, Any]:
         JOIN airports a_o ON a_o.id = r.origin_id
         JOIN airports a_d ON a_d.id = r.destination_id
         JOIN planes p ON p.id = s.plane_id
-        WHERE fl.id = ?
+        WHERE fl.id = ? AND fl.deleted_at IS NULL
         """,
         (flight_id,),
     )
     if not row:
         raise HTTPException(status_code=404, detail="Flight not found")
+
+    # Grace period: allow lookup within 5 minutes after departure
+    grace_minutes = 5
+    now = datetime.now()
+    row["lookup_allowed"] = True
+    row["message"] = None
+
+    dep_time_str = row.get("departure_time")
+    if dep_time_str:
+        try:
+            dep_time = datetime.strptime(str(dep_time_str), "%H:%M:%S").replace(
+                year=now.year, month=now.month, day=now.day
+            )
+            # Handle flights past midnight (e.g., 00:30)
+            if dep_time < now - timedelta(hours=12):
+                dep_time += timedelta(days=1)
+
+            grace_deadline = dep_time + timedelta(minutes=grace_minutes)
+
+            if now > grace_deadline:
+                row["lookup_allowed"] = False
+                row["message"] = "Chuyến bay đã cất cánh"
+            elif now > dep_time:
+                row["lookup_allowed"] = True
+                row["message"] = "Chuyến bay đã cất cánh (trong thời gian tra cứu)"
+        except ValueError:
+            pass  # Ignore parsing errors
+
     return row
+
+
+@router.delete("/flights/{flight_id}")
+def delete_flight(
+    flight_id: int,
+    _: Annotated[dict, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Soft delete a flight by setting deleted_at timestamp."""
+    row = _fetch_one("SELECT * FROM flights WHERE id = ? AND deleted_at IS NULL", (flight_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _execute("UPDATE flights SET deleted_at = ? WHERE id = ?", (now, flight_id))
+
+    # Cleanup face embeddings in Qdrant
+    try:
+        from server.vector_service import delete_flight_embeddings
+        delete_flight_embeddings(flight_id)
+    except Exception:
+        pass  # Non-critical: Qdrant cleanup failure shouldn't block flight deletion
+
+    return {"status": "deleted", "flight_id": flight_id, "deleted_at": now}
+
+
+@router.patch("/flights/{flight_id}/restore")
+def restore_flight(
+    flight_id: int,
+    _: Annotated[dict, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Restore a soft-deleted flight by clearing deleted_at."""
+    row = _fetch_one("SELECT * FROM flights WHERE id = ? AND deleted_at IS NOT NULL", (flight_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Deleted flight not found")
+
+    _execute("UPDATE flights SET deleted_at = NULL WHERE id = ?", (flight_id,))
+
+    return {"status": "restored", "flight_id": flight_id}
 
 
 @router.get("/flights/{flight_id}/seats")
@@ -655,7 +725,7 @@ def _get_booking_detail(booking_id: int) -> dict[str, Any]:
             a_d.code AS dest_code, a_d.city AS dest_city,
             u.full_name AS user_name, u.email AS user_email
         FROM bookings b
-        JOIN flights fl ON fl.id = b.flight_id
+        JOIN flights fl ON fl.id = b.flight_id AND fl.deleted_at IS NULL
         JOIN schedules s ON s.id = fl.schedule_id
         JOIN routes r ON r.id = s.route_id
         JOIN airports a_o ON a_o.id = r.origin_id

@@ -33,6 +33,18 @@ export async function initSearch(params, route) {
       <p>Đang tìm chuyến bay…</p>
     </div>`;
 
+  // Check for departed flights in grace period
+  const departedCount = flights.filter(f => f.status === "departed").length;
+  if (departedCount > 0) {
+    const headerEl = document.getElementById("searchHeader");
+    if (headerEl) {
+      headerEl.innerHTML += `
+        <div class="alert alert--warning" style="margin-top:12px;font-size:0.85rem;">
+          Có ${departedCount} chuyến bay đã cất cánh (trong thời gian tra cứu 5 phút)
+        </div>`;
+    }
+  }
+
   try {
     const flights = await apiSearchFlights({ origin, destination, date, passengers });
 

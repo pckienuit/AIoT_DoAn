@@ -55,9 +55,9 @@ function createFlightCard(flight, { onSelect, selected = false } = {}) {
   const statusBadge = {
     scheduled: `<span class="badge badge--muted">Scheduled</span>`,
     boarding:  `<span class="badge badge--signal">Boarding</span>`,
-    departed:  `<span class="badge badge--muted">Departed</span>`,
-    arrived:   `<span class="badge badge--ok">Arrived</span>`,
-    cancelled: `<span class="badge badge--danger">Cancelled</span>`,
+    departed:  `<span class="badge badge--muted">Đã cất cánh</span>`,
+    arrived:   `<span class="badge badge--ok">Đã hạ cánh</span>`,
+    cancelled: `<span class="badge badge--danger">Đã hủy</span>`,
   }[statusLabel] || `<span class="badge badge--muted">${statusLabel}</span>`;
 
   const seats = flight.available_seats || 0;

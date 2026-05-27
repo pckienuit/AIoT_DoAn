@@ -25,6 +25,23 @@ export async function initBooking(params) {
     return;
   }
 
+  // Check if flight lookup is still allowed
+  if (flight.lookup_allowed === false || flight.message === "Chuyến bay đã cất cánh") {
+    const el = document.getElementById("flightSummary");
+    if (el) {
+      el.innerHTML = `
+        <div class="alert alert--warning" style="margin-bottom: 16px;">
+          <strong>Chuyến bay đã cất cánh</strong><br>
+          Chuyến bay này đã cất cánh và không còn cho phép đặt vé.
+        </div>`;
+    }
+    const form = document.getElementById("bookingForm");
+    if (form) {
+      form.querySelectorAll("input, select, textarea, button").forEach(el => el.disabled = true);
+    }
+    return;
+  }
+
   renderFlightSummary(flight);
   restoreForm();
 

@@ -5,7 +5,7 @@
   ],
   "sync_interval_sec": 300,
   "cache_dir": "/root/cache",
-  "match_threshold": 0.032,
+  "match_threshold": 0.036,
   "api_timeout_sec": 5,
   "fallback_enabled": true,
   "enable_lcd": false,

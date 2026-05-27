@@ -95,3 +95,17 @@ def get_vector_status() -> dict[str, object]:
         "available": True,
         "collection_exists": exists,
     }
+
+
+def delete_flight_embeddings(flight_id: int) -> int:
+    """Delete all face embeddings for a flight. Returns count of deleted points."""
+    client = get_qdrant_client()
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[models.FieldCondition(key="flight_id", match=models.MatchValue(value=flight_id))]
+            )
+        ),
+    )
+    return 1  # Qdrant delete is async, count not available

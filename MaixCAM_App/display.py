@@ -100,10 +100,11 @@ def draw_status(img, msg: str, color=None):
     img.draw_string(10, 10, msg, color)
 
 
-def draw_hud(img, db_count: int, cache_count: int, flight_id: int, threshold: float):
+def draw_hud(img, db_count: int, cache_count: int, flight_id: int, threshold: float, flight_status: str = None):
     """Bottom HUD bar showing pipeline status."""
-    hud = "v9+P3 | cache:{} | flight:{} | th:{:.3f}".format(
-        cache_count, flight_id, threshold
+    status_str = " [{}]".format(flight_status) if flight_status else ""
+    hud = "v9+P3 | cache:{} | flight:{}{} | th:{:.3f}".format(
+        cache_count, flight_id, status_str, threshold
     )
     img.draw_string(8, img.height() - 18, hud, COLOR_WHITE)
 

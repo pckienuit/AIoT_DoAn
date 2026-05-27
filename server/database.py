@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS flights (
     available_seats INTEGER NOT NULL,
     price_multiplier REAL DEFAULT 1.00,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT,
     FOREIGN KEY (schedule_id) REFERENCES schedules(id)
 );
 
@@ -342,6 +343,7 @@ CREATE TABLE IF NOT EXISTS flights (
     available_seats INT NOT NULL,
     price_multiplier DECIMAL(3,2) DEFAULT 1.00,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
     FOREIGN KEY (schedule_id) REFERENCES schedules(id),
     INDEX idx_flight_date (flight_date)
 );

@@ -191,6 +191,7 @@ class CacheManager:
         """
         Download embeddings for flight_id from server and save to cache.
         Returns number of items synced, or -1 on failure.
+        Returns -2 if flight is departed/arrived (no recognition allowed).
         """
         if int(flight_id) == 999999:
             print("[sync] Skipping server sync for test flight 999999 to protect local test data")
@@ -210,15 +211,39 @@ class CacheManager:
             print("[sync] Sync failed for flight", flight_id)
             return -1
 
+        # Check flight status - prevent recognition if departed/arrived
+        flight_status = data.get("status", "")
+        if flight_status in ("departed", "arrived", "cancelled"):
+            print("[sync] Flight {} is {}, recognition disabled".format(flight_id, flight_status))
+            # Still cache the status info
+            cache_entry = {
+                "flight_id": flight_id,
+                "status": flight_status,
+                "departure_time": data.get("departure_time"),
+                "arrival_time": data.get("arrival_time"),
+                "synced_at": time.time(),
+                "count": 0,
+                "items": [],
+                "recognition_allowed": False,
+            }
+            self._write_cache(flight_id, cache_entry)
+            if flight_id in self._ram_cache:
+                del self._ram_cache[flight_id]
+            return -2
+
         count = data.get("count", 0)
         items = data.get("items", [])
 
         # Note: items are stored encrypted on SD card. No normalization on sync.
         cache_entry = {
             "flight_id": flight_id,
+            "status": flight_status,
+            "departure_time": data.get("departure_time"),
+            "arrival_time": data.get("arrival_time"),
             "synced_at": time.time(),
             "count": count,
             "items": items,
+            "recognition_allowed": True,
         }
         self._write_cache(flight_id, cache_entry)
         
@@ -226,7 +251,7 @@ class CacheManager:
         if flight_id in self._ram_cache:
             del self._ram_cache[flight_id]
             
-        print("[sync] Synced {} embeddings for flight {}".format(count, flight_id))
+        print("[sync] Synced {} embeddings for flight {} (status: {})".format(count, flight_id, flight_status))
         return count
 
     def sync_all(self, flight_ids: list) -> dict:
@@ -334,6 +359,10 @@ class CacheManager:
             "count": cache.get("count", 0),
             "synced_at": cache.get("synced_at"),
             "age_sec": time.time() - cache.get("synced_at", 0),
+            "status": cache.get("status"),
+            "departure_time": cache.get("departure_time"),
+            "arrival_time": cache.get("arrival_time"),
+            "recognition_allowed": cache.get("recognition_allowed", True),
         }
 
     def clear_cache(self, flight_id: int) -> bool:

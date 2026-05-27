@@ -569,7 +569,12 @@ def main():
                             # --- PRIMARY: Cache + Server match (GD4) ---
                             cache_info = cache_mgr.get_cache_info(active_flight)
                             recognition_cache = {"time": now}
-                            if cache_info.get("cached"):
+
+                            # Check if recognition is allowed (flight not departed/arrived)
+                            if not cache_info.get("recognition_allowed", True):
+                                flight_status = cache_info.get("status", "unknown")
+                                draw_status(img, "Flight {} - Recognition disabled".format(flight_status), image.COLOR_RED)
+                            elif cache_info.get("cached"):
                                 last_result = cache_mgr.match_local(embedding, active_flight)
                                 overlay_cache["mode"] = "match"
                                 overlay_cache["result"] = last_result
@@ -604,7 +609,8 @@ def main():
                  db_count=len(face_db),
                  cache_count=cache_info.get("count", 0),
                  flight_id=active_flight,
-                 threshold=RECOG_THRESH)
+                 threshold=RECOG_THRESH,
+                 flight_status=cache_info.get("status"))
 
         if disp:
             disp.show(img)

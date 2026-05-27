@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from server.database import get_connection
-from server.routes import get_booking
+from server.routes import _fetch_one, get_booking
 from server.vector_service import (
     search_face_embedding,
     scroll_flight_embeddings,
@@ -136,6 +136,19 @@ def match_face(payload: FaceMatchRequest) -> dict[str, Any]:
 
 @router.get("/sync/{flight_id}")
 def sync_flight_cache(flight_id: int) -> dict[str, Any]:
+    # Get flight info for status check on edge
+    flight_row = _fetch_one(
+        """
+        SELECT fl.status, s.departure_time, s.arrival_time
+        FROM flights fl
+        JOIN schedules s ON s.id = fl.schedule_id
+        WHERE fl.id = ? AND fl.deleted_at IS NULL
+        """,
+        (flight_id,),
+    )
+    if not flight_row:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
     records = scroll_flight_embeddings(flight_id)
     items = []
     for record in records:
@@ -151,4 +164,12 @@ def sync_flight_cache(flight_id: int) -> dict[str, Any]:
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Failed to encrypt sync data: {str(exc)}") from exc
-    return {"flight_id": flight_id, "count": len(items), "items": items}
+
+    return {
+        "flight_id": flight_id,
+        "status": flight_row.get("status"),
+        "departure_time": flight_row.get("departure_time"),
+        "arrival_time": flight_row.get("arrival_time"),
+        "count": len(items),
+        "items": items,
+    }

@@ -196,6 +196,20 @@ def migrate_users():
     conn.close()
 
 
+def migrate_flights_deleted_at():
+    """Add deleted_at column to flights table for soft delete support."""
+    conn = _conn()
+    cur = conn.execute("PRAGMA table_info(flights)")
+    cols = {r[1] for r in cur.fetchall()}
+    if "deleted_at" not in cols:
+        conn.execute("ALTER TABLE flights ADD COLUMN deleted_at TEXT")
+        conn.commit()
+        print("  [OK]   flights — added deleted_at column for soft delete")
+    else:
+        print("  [SKIP] flights — already has deleted_at column")
+    conn.close()
+
+
 def main():
     print("\n  Migrating prototype.db …\n")
     backup()
@@ -203,6 +217,7 @@ def main():
     migrate_flights()
     migrate_airports()
     migrate_users()
+    migrate_flights_deleted_at()
     print("\n  Done. Run 'python -m server.seed' to populate data.\n")
 
 
