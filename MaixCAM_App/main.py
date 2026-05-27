@@ -81,6 +81,10 @@ LM_THRESH    = 0.40
 LM_ALPHA     = 0.35
 RECOG_THRESH = CFG.get("match_threshold", 0.045)
 REGISTER_FRAMES = 7
+AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 3)))
+RECOG_FRAME_INTERVAL = max(1, int(CFG.get("recognition_frame_interval", 9)))
+OVERLAY_CACHE_TTL_SEC = float(CFG.get("overlay_cache_ttl_sec", 1.0))
+RECOG_CACHE_TTL_SEC = float(CFG.get("recognition_cache_ttl_sec", 1.5))
 
 LM_NAMES  = ["LE", "RE", "N", "LM", "RM"]
 LM_COLORS = [
@@ -271,6 +275,76 @@ def match_identity_local_db(embedding, db):
     return best_name, best_dist
 
 
+def draw_cached_overlay(img, overlay, now):
+    if overlay is None:
+        return False
+    if now - overlay.get("time", 0.0) > OVERLAY_CACHE_TTL_SEC:
+        return False
+
+    x = overlay["x"]
+    y = overlay["y"]
+    w = overlay["w"]
+    h = overlay["h"]
+    crop_x = overlay["crop_x"]
+    crop_y = overlay["crop_y"]
+    lm_abs = overlay.get("lm_abs", [])
+
+    img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
+    img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
+                  color=image.Color(255, 200, 0), thickness=1)
+    for i in range(min(5, int(len(lm_abs) / 2))):
+        img.draw_circle(lm_abs[i * 2], lm_abs[i * 2 + 1], 3, LM_COLORS[i], -1)
+
+    mode = overlay.get("mode")
+    if mode == "match":
+        draw_match_result(img, overlay.get("result"), x, y, w, h)
+    elif mode == "local":
+        img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=3)
+        img.draw_string(x, max(0, y - 18), overlay.get("label", ""),
+                        image.COLOR_GREEN)
+    elif mode == "no_match":
+        draw_no_match(img, x, y, w, h)
+
+    score = overlay.get("score")
+    if score is not None:
+        img.draw_string(x, y + h + 3, "v9:{:.2f}".format(score),
+                        image.COLOR_YELLOW)
+    return True
+
+
+def apply_cached_recognition(overlay, recognition, now):
+    if recognition is None:
+        return False
+    if now - recognition.get("time", 0.0) > RECOG_CACHE_TTL_SEC:
+        return False
+
+    overlay["mode"] = recognition.get("mode")
+    if "result" in recognition:
+        overlay["result"] = recognition.get("result")
+    if "label" in recognition:
+        overlay["label"] = recognition.get("label")
+    return True
+
+
+def draw_recognition_overlay(img, overlay):
+    mode = overlay.get("mode")
+    if not mode:
+        return
+
+    x = overlay["x"]
+    y = overlay["y"]
+    w = overlay["w"]
+    h = overlay["h"]
+    if mode == "match":
+        draw_match_result(img, overlay.get("result"), x, y, w, h)
+    elif mode == "local":
+        img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=3)
+        img.draw_string(x, max(0, y - 18), overlay.get("label", ""),
+                        image.COLOR_GREEN)
+    elif mode == "no_match":
+        draw_no_match(img, x, y, w, h)
+
+
 # =====================================================================
 # SYNC LOOP STATE
 # =====================================================================
@@ -306,7 +380,7 @@ def main():
     cam_w = FACE_DET.input_width()
     cam_h = FACE_DET.input_height()
     cam  = camera.Camera(cam_w, cam_h, FACE_DET.input_format())
-    
+
     enable_lcd = CFG.get("enable_lcd", True)
     disp = None
     if enable_lcd:
@@ -319,6 +393,10 @@ def main():
     else:
         print("LCD Display is disabled in config")
 
+    mjpeg_server.configure(
+        CFG.get("stream_fps_limit", 15),
+        CFG.get("stream_jpeg_quality", 70)
+    )
     mjpeg_server.start_server(8080)
     print("Camera:  {}x{}".format(cam_w, cam_h))
     print("Server:  {}".format(CFG["server_url"]))
@@ -341,125 +419,176 @@ def main():
     last_sync_time = time.time()
     sync_interval = CFG.get("sync_interval_sec", 300)
     last_result = None  # Cache last match result to persist overlay
+    overlay_cache = None
+    recognition_cache = None
+    # Throttle file I/O: only check disk-based flags/files at most once per second
+    IO_CHECK_INTERVAL = 1.0
+    last_io_check = 0.0
+    active_flight = read_active_flight()  # Read once at startup
 
     while not app.need_exit():
         img = cam.read()
-
-        # --- Read active flight (can change at runtime) ---
-        active_flight = read_active_flight()
-
-        # --- Periodic auto-sync ---
         now = time.time()
-        if (now - last_sync_time) >= sync_interval or check_sync_flag():
-            print("[main] Auto-sync triggered")
-            do_sync(active_flight)
-            last_sync_time = now
 
-        # --- Legacy local DB controls ---
-        handle_clear_request(face_db)
-        request_name = read_register_request()
-        if request_name:
-            pending_name = request_name
-            pending_embeddings = []
-            print("Registering '{}' with {} frames".format(pending_name, REGISTER_FRAMES))
+        # --- Throttled file I/O: run at most once per IO_CHECK_INTERVAL seconds ---
+        if now - last_io_check >= IO_CHECK_INTERVAL:
+            last_io_check = now
 
-        # --- Face detection ---
-        objs = FACE_DET.detect(img, conf_th=DETECT_CONF, iou_th=DETECT_IOU)
+            # Read active flight (can change at runtime via file)
+            active_flight = read_active_flight()
 
-        if len(objs) == 0:
-            ema_lm = None
-            last_result = None
-            draw_status(img, "No face", image.COLOR_RED)
+            # Periodic auto-sync
+            if (now - last_sync_time) >= sync_interval or check_sync_flag():
+                print("[main] Auto-sync triggered")
+                do_sync(active_flight)
+                last_sync_time = now
+
+            # Legacy local DB controls
+            handle_clear_request(face_db)
+            request_name = read_register_request()
+            if request_name:
+                pending_name = request_name
+                pending_embeddings = []
+                print("Registering '{}' with {} frames".format(pending_name, REGISTER_FRAMES))
+
+        should_run_ai = (frame_idx % AI_FRAME_INTERVAL == 0)
+        if not should_run_ai:
+            if not draw_cached_overlay(img, overlay_cache, now):
+                overlay_cache = None
         else:
-            for obj in objs:
-                x, y, w, h = int(obj.x), int(obj.y), int(obj.w), int(obj.h)
-                crop_x = int(x + w / 2 - CROP_W / 2)
-                crop_y = int(y + h * 0.4 - CROP_H * EYE_V_OFFSET)
-                face_crop = make_crop_with_padding(img, crop_x, crop_y, CROP_W, CROP_H)
-                canvas = make_v9_input(face_crop)
+            overlay_cache = None
 
-                img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
-                img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
-                              color=image.Color(255, 200, 0), thickness=1)
+            # --- Face detection ---
+            objs = FACE_DET.detect(img, conf_th=DETECT_CONF, iou_th=DETECT_IOU)
 
-                outputs = LM_MODEL.forward_image(
-                    canvas, IMG_MEAN, IMG_SCALE,
-                    image.Fit.FIT_FILL, True, False
-                )
-                if not outputs:
-                    continue
+            if len(objs) == 0:
+                ema_lm = None
+                last_result = None
+                recognition_cache = None
+                draw_status(img, "No face", image.COLOR_RED)
+            else:
+                for obj in objs:
+                    x, y, w, h = int(obj.x), int(obj.y), int(obj.w), int(obj.h)
+                    crop_x = int(x + w / 2 - CROP_W / 2)
+                    crop_y = int(y + h * 0.4 - CROP_H * EYE_V_OFFSET)
+                    face_crop = make_crop_with_padding(img, crop_x, crop_y, CROP_W, CROP_H)
+                    canvas = make_v9_input(face_crop)
 
-                class_arr    = get_tensor_array(outputs, OUT_CLASS_ALIASES)
-                landmark_arr = get_tensor_array(outputs, OUT_LANDMARK_ALIASES)
-                if class_arr is None or landmark_arr is None:
-                    img.draw_string(x, max(0, y - 15), "v9 miss", image.COLOR_RED)
-                    continue
+                    img.draw_rect(x, y, w, h, color=image.COLOR_GREEN, thickness=2)
+                    img.draw_rect(crop_x, crop_y, CROP_W, CROP_H,
+                                  color=image.Color(255, 200, 0), thickness=1)
 
-                score = sigmoid(class_arr[0])
-                landmark_arr = [max(0.0, min(1.0, float(v))) for v in landmark_arr]
+                    outputs = LM_MODEL.forward_image(
+                        canvas, IMG_MEAN, IMG_SCALE,
+                        image.Fit.FIT_FILL, True, False
+                    )
+                    if not outputs:
+                        continue
 
-                if ema_lm is None:
-                    ema_lm = landmark_arr[:]
-                else:
-                    ema_lm = [LM_ALPHA * landmark_arr[i] + (1 - LM_ALPHA) * ema_lm[i]
-                              for i in range(10)]
+                    class_arr    = get_tensor_array(outputs, OUT_CLASS_ALIASES)
+                    landmark_arr = get_tensor_array(outputs, OUT_LANDMARK_ALIASES)
+                    if class_arr is None or landmark_arr is None:
+                        img.draw_string(x, max(0, y - 15), "v9 miss", image.COLOR_RED)
+                        continue
 
-                if score <= LM_THRESH:
-                    img.draw_string(x, max(0, y - 15),
-                                    "low:{:.2f}".format(score), image.COLOR_RED)
-                    continue
+                    score = sigmoid(class_arr[0])
+                    landmark_arr = [max(0.0, min(1.0, float(v))) for v in landmark_arr]
 
-                lm_abs = []
-                for i in range(5):
-                    lx = int(ema_lm[i * 2] * CROP_W) + crop_x
-                    ly = int(ema_lm[i * 2 + 1] * CROP_H) + crop_y
-                    lx = max(0, min(cam_w - 1, lx))
-                    ly = max(0, min(cam_h - 1, ly))
-                    lm_abs.append(lx)
-                    lm_abs.append(ly)
-                    img.draw_circle(lx, ly, 3, LM_COLORS[i], -1)
-
-                recog_face = make_recognition_crop(img, lm_abs)
-                embedding  = extract_embedding(recog_face)
-                if embedding is None:
-                    img.draw_string(x, max(0, y - 15), "P3 fail", image.COLOR_RED)
-                    continue
-
-                # --- Legacy local registration (dev mode) ---
-                if pending_name:
-                    pending_embeddings.append(embedding)
-                    progress = len(pending_embeddings)
-                    img.draw_string(10, 50,
-                                    "Register {} {}/{}".format(
-                                        pending_name, progress, REGISTER_FRAMES),
-                                    image.COLOR_YELLOW)
-                    if progress >= REGISTER_FRAMES:
-                        face_db[pending_name] = average_embeddings(pending_embeddings)
-                        save_face_db(face_db)
-                        print("Registered:", pending_name)
-                        pending_name = None
-                        pending_embeddings = []
-
-                # --- PRIMARY: Cache + Server match (GD4) ---
-                cache_info = cache_mgr.get_cache_info(active_flight)
-                if cache_info.get("cached"):
-                    last_result = cache_mgr.match(embedding, active_flight)
-                    draw_match_result(img, last_result, x, y, w, h)
-                else:
-                    # No cache yet — fall back to legacy local DB
-                    identity, dist = match_identity_local_db(embedding, face_db)
-                    if identity == "Unknown":
-                        draw_no_match(img, x, y, w, h)
+                    if ema_lm is None:
+                        ema_lm = landmark_arr[:]
                     else:
-                        img.draw_rect(x, y, w, h,
-                                      color=image.COLOR_GREEN, thickness=3)
-                        img.draw_string(x, max(0, y - 18),
-                                        "{} (local) d={:.3f}".format(identity, dist),
-                                        image.COLOR_GREEN)
+                        ema_lm = [LM_ALPHA * landmark_arr[i] + (1 - LM_ALPHA) * ema_lm[i]
+                                  for i in range(10)]
 
-                img.draw_string(x, y + h + 3,
-                                "v9:{:.2f}".format(score), image.COLOR_YELLOW)
-                break  # Process first face only
+                    if score <= LM_THRESH:
+                        img.draw_string(x, max(0, y - 15),
+                                        "low:{:.2f}".format(score), image.COLOR_RED)
+                        continue
+
+                    lm_abs = []
+                    for i in range(5):
+                        lx = int(ema_lm[i * 2] * CROP_W) + crop_x
+                        ly = int(ema_lm[i * 2 + 1] * CROP_H) + crop_y
+                        lx = max(0, min(cam_w - 1, lx))
+                        ly = max(0, min(cam_h - 1, ly))
+                        lm_abs.append(lx)
+                        lm_abs.append(ly)
+                        img.draw_circle(lx, ly, 3, LM_COLORS[i], -1)
+
+                    overlay_cache = {
+                        "time": now,
+                        "x": x,
+                        "y": y,
+                        "w": w,
+                        "h": h,
+                        "crop_x": crop_x,
+                        "crop_y": crop_y,
+                        "lm_abs": lm_abs,
+                        "score": score,
+                    }
+
+                    should_run_recognition = (
+                        pending_name is not None or
+                        recognition_cache is None or
+                        (now - recognition_cache.get("time", 0.0)) >= RECOG_CACHE_TTL_SEC or
+                        (frame_idx % RECOG_FRAME_INTERVAL == 0)
+                    )
+
+                    if not should_run_recognition and apply_cached_recognition(
+                            overlay_cache, recognition_cache, now):
+                        draw_recognition_overlay(img, overlay_cache)
+                    else:
+                        recog_face = make_recognition_crop(img, lm_abs)
+                        embedding  = extract_embedding(recog_face)
+                        if embedding is None:
+                            img.draw_string(x, max(0, y - 15), "P3 fail", image.COLOR_RED)
+                        else:
+                            # --- Legacy local registration (dev mode) ---
+                            if pending_name:
+                                pending_embeddings.append(embedding)
+                                progress = len(pending_embeddings)
+                                img.draw_string(10, 50,
+                                                "Register {} {}/{}".format(
+                                                    pending_name, progress, REGISTER_FRAMES),
+                                                image.COLOR_YELLOW)
+                                if progress >= REGISTER_FRAMES:
+                                    face_db[pending_name] = average_embeddings(pending_embeddings)
+                                    save_face_db(face_db)
+                                    print("Registered:", pending_name)
+                                    pending_name = None
+                                    pending_embeddings = []
+
+                            # --- PRIMARY: Cache + Server match (GD4) ---
+                            cache_info = cache_mgr.get_cache_info(active_flight)
+                            recognition_cache = {"time": now}
+                            if cache_info.get("cached"):
+                                last_result = cache_mgr.match_local(embedding, active_flight)
+                                overlay_cache["mode"] = "match"
+                                overlay_cache["result"] = last_result
+                                recognition_cache["mode"] = "match"
+                                recognition_cache["result"] = last_result
+                                draw_match_result(img, last_result, x, y, w, h)
+                            else:
+                                # No cache yet: fall back to legacy local DB
+                                identity, dist = match_identity_local_db(embedding, face_db)
+                                if identity == "Unknown":
+                                    overlay_cache["mode"] = "no_match"
+                                    recognition_cache["mode"] = "no_match"
+                                    draw_no_match(img, x, y, w, h)
+                                else:
+                                    label = "{} (local) d={:.3f}".format(identity, dist)
+                                    overlay_cache["mode"] = "local"
+                                    overlay_cache["label"] = label
+                                    recognition_cache["mode"] = "local"
+                                    recognition_cache["label"] = label
+                                    img.draw_rect(x, y, w, h,
+                                                  color=image.COLOR_GREEN, thickness=3)
+                                    img.draw_string(x, max(0, y - 18), label,
+                                                    image.COLOR_GREEN)
+
+                    img.draw_string(x, y + h + 3,
+                                    "v9:{:.2f}".format(score), image.COLOR_YELLOW)
+                    break  # Process first face only
 
         # --- HUD ---
         cache_info = cache_mgr.get_cache_info(active_flight)

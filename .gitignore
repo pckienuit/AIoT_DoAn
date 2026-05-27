@@ -10,3 +10,4 @@ models/checkpoints/
 models/exports/
 .env
 /.venv
+*.log

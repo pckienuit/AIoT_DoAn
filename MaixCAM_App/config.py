@@ -15,6 +15,12 @@ DEFAULTS = {
     "match_threshold": 0.045,   # Cosine distance threshold
     "api_timeout_sec": 5,       # HTTP timeout for API calls
     "fallback_enabled": True,   # Call server API on cache miss
+    "stream_fps_limit": 15,     # Max FPS for web streaming
+    "stream_jpeg_quality": 70,  # JPEG compression quality (1-100)
+    "ai_frame_interval": 3,     # Run AI once every N camera frames
+    "recognition_frame_interval": 9, # Run ArcFace once every N camera frames
+    "overlay_cache_ttl_sec": 1.0, # Keep last recognition overlay briefly
+    "recognition_cache_ttl_sec": 1.5, # Reuse recent ArcFace match briefly
 }
 
 
