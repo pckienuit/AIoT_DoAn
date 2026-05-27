@@ -13,7 +13,7 @@ import sys
 
 import paramiko
 
-DEVICE_HOST = "10.154.35.1"
+DEVICE_HOST = "10.154.36.1"
 DEVICE_USER = "root"
 DEVICE_PASS = "root"      # MaixCAM default — change if different
 DEVICE_PORT = 22

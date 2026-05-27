@@ -180,6 +180,8 @@ class CacheManager:
         raw_key = cfg.get("device_secret_key", "d3v1c3_s3cr3t_ke")
         self.device_key = raw_key.encode("utf-8")[:16].ljust(16, b"\x00")
         self._ensure_cache_dir()
+        # RAM cache: {flight_id: data} to avoid expensive SD card read + decrypt every frame
+        self._ram_cache = {}
 
     # ------------------------------------------------------------------
     # PUBLIC API
@@ -208,6 +210,11 @@ class CacheManager:
             "items": items,
         }
         self._write_cache(flight_id, cache_entry)
+        
+        # Invalidate RAM cache so it gets decrypted/loaded fresh on next match
+        if flight_id in self._ram_cache:
+            del self._ram_cache[flight_id]
+            
         print("[sync] Synced {} embeddings for flight {}".format(count, flight_id))
         return count
 
@@ -321,6 +328,8 @@ class CacheManager:
     def clear_cache(self, flight_id: int) -> bool:
         """Delete cache file for a flight."""
         path = self._cache_path(flight_id)
+        if flight_id in self._ram_cache:
+            del self._ram_cache[flight_id]
         if os.path.exists(path):
             os.remove(path)
             print("[cache] Cleared cache for flight", flight_id)
@@ -348,6 +357,9 @@ class CacheManager:
             print("[cache] Write failed:", e)
 
     def _read_cache(self, flight_id: int) -> dict | None:
+        if flight_id in self._ram_cache:
+            return self._ram_cache[flight_id]
+
         path = self._cache_path(flight_id)
         if not os.path.exists(path):
             return None
@@ -372,6 +384,7 @@ class CacheManager:
                         valid_items.append(item)
                         
             data["items"] = valid_items
+            self._ram_cache[flight_id] = data
             return data
         except Exception as e:
             print("[cache] Read failed:", e)

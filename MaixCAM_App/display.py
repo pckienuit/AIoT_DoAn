@@ -51,10 +51,10 @@ def draw_match_result(img, result: dict | None, x: int, y: int, w: int, h: int):
     name      = payload.get("passenger_name", "Unknown")
     gate      = payload.get("gate", "?")
     seat      = payload.get("seat_number", "?")
-    flight    = payload.get("flight_code", "?")
+    flight    = payload.get("flight_number") or payload.get("flight_code") or "?"
     departure = payload.get("departure_time", "")
     boarding  = payload.get("boarding_time", "")
-    dest      = payload.get("destination", "")
+    dest      = payload.get("dest_city") or payload.get("destination") or ""
 
     # Green bounding box on match
     img.draw_rect(x, y, w, h, color=COLOR_GREEN, thickness=3)
@@ -63,10 +63,10 @@ def draw_match_result(img, result: dict | None, x: int, y: int, w: int, h: int):
     label = "{} ({:.3f})".format(name, dist)
     img.draw_string(x, max(0, y - 22), label, COLOR_GREEN)
 
-    # Info panel — bottom-left of frame
+    # Info panel — bottom-left of frame (draw as an outline border box to not block camera)
     panel_x = 8
-    panel_y = img.height() - 130
-    line_h  = 22
+    panel_y = img.height() - 145
+    line_h  = 20
 
     lines = [
         "[{}] {}".format("C" if source == "cache" else "S", flight),
@@ -77,15 +77,15 @@ def draw_match_result(img, result: dict | None, x: int, y: int, w: int, h: int):
         "Board: {}".format(boarding[:16] if boarding else ""),
     ]
 
-    # Semi-transparent background bar
+    # Outline border box (holographic/clean design) instead of solid black block
     bar_h = line_h * len(lines) + 8
     img.draw_rect(panel_x - 4, panel_y - 4,
                   img.width() - 2 * panel_x + 8, bar_h,
-                  color=mx_image.Color(0, 0, 0) if _HAS_MAIX else None,
-                  thickness=-1)
+                  color=COLOR_GREEN,
+                  thickness=2)
 
     for i, line in enumerate(lines):
-        img.draw_string(panel_x, panel_y + i * line_h, line, COLOR_CYAN)
+        img.draw_string(panel_x, panel_y + i * line_h, line, COLOR_WHITE)
 
 
 def draw_no_match(img, x: int, y: int, w: int, h: int):
