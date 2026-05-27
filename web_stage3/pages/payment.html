@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thanh toán — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Bước 3 / 4</div>
+          <h1>Thanh toán</h1>
+          <p class="text-muted">Chọn phương thức thanh toán để hoàn tất đặt vé.</p>
+        </div>
+
+        <div class="page__grid page__grid--sidebar">
+          <!-- Booking summary -->
+          <div class="panel">
+            <div class="panel__body">
+              <h3 style="margin-bottom:var(--sp-4);">Thông tin đặt vé</h3>
+              <div id="bookingSummary"></div>
+            </div>
+          </div>
+
+          <!-- Payment options -->
+          <div class="panel">
+            <div class="panel__header">
+              <span class="step-badge">B</span>
+              <div>
+                <h2 id="paymentPanelTitle">Phương thức thanh toán</h2>
+                <p id="paymentPanelDesc">Chọn cách thanh toán phù hợp với bạn.</p>
+              </div>
+            </div>
+            <div class="panel__body">
+              <div id="paymentError" style="display:none;margin-bottom:var(--sp-4);"></div>
+
+              <!-- Passenger Contact Form (Conditional) -->
+              <div id="passengerFormContainer" style="display:none; margin-bottom:var(--sp-5);">
+                <h3 style="margin-bottom:var(--sp-3);">Thông tin hành khách liên hệ</h3>
+                <div class="field-grid field-grid--2" style="display:grid; gap:var(--sp-3); grid-template-columns: 1fr 1fr;">
+                  <div class="field" style="grid-column: 1 / -1;">
+                    <label class="label" for="passengerName">Họ tên <span style="color:var(--danger)">*</span></label>
+                    <input id="passengerName" name="name" type="text" class="input"
+                      placeholder="VD: Nguyễn Văn A" required />
+                  </div>
+                  <div class="field">
+                    <label class="label" for="passengerEmail">Email <span style="color:var(--danger)">*</span></label>
+                    <input id="passengerEmail" name="email" type="email" class="input"
+                      placeholder="email@example.com" required />
+                  </div>
+                  <div class="field">
+                    <label class="label" for="passengerPhone">Số điện thoại <span style="color:var(--danger)">*</span></label>
+                    <input id="passengerPhone" name="phone" type="tel" class="input"
+                      placeholder="0901234567" required />
+                  </div>
+                </div>
+                <hr class="divider" style="margin:var(--sp-4) 0;" />
+              </div>
+
+              <div style="display:grid;gap:var(--sp-3);margin-bottom:var(--sp-5);">
+                <label class="payment-option" id="optVnpay">
+                  <input type="radio" name="method" value="vnpay" class="payment-option__radio" />
+                  <div class="payment-option__icon">VN</div>
+                  <div class="payment-option__info">
+                    <div class="payment-option__name">VNPay</div>
+                    <div class="payment-option__desc text-xs text-muted">Thanh toán qua ví VNPay, internet banking</div>
+                  </div>
+                  <div class="payment-option__check">✓</div>
+                </label>
+
+                <label class="payment-option" id="optMoMo">
+                  <input type="radio" name="method" value="momo" class="payment-option__radio" />
+                  <div class="payment-option__icon">Mo</div>
+                  <div class="payment-option__info">
+                    <div class="payment-option__name">MoMo</div>
+                    <div class="payment-option__desc text-xs text-muted">Quét mã MoMo để thanh toán nhanh</div>
+                  </div>
+                  <div class="payment-option__check">✓</div>
+                </label>
+
+                <label class="payment-option" id="optCash">
+                  <input type="radio" name="method" value="cash" class="payment-option__radio" />
+                  <div class="payment-option__icon">₫</div>
+                  <div class="payment-option__info">
+                    <div class="payment-option__name">Tiền mặt</div>
+                    <div class="payment-option__desc text-xs text-muted">Thanh toán trực tiếp tại quầy</div>
+                  </div>
+                  <div class="payment-option__check">✓</div>
+                </label>
+              </div>
+
+              <div id="paymentActions">
+                <button id="payNowBtn" class="btn btn--primary btn--lg" style="width:100%;" disabled>
+                  Chọn phương thức thanh toán
+                </button>
+              </div>
+
+              <div style="margin-top:var(--sp-4);text-align:center;">
+                <a href="/seat-map" class="btn btn--ghost btn--sm">← Quay lại chọn ghế</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <style>
+    .payment-option {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-4);
+      padding: var(--sp-4) var(--sp-5);
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      cursor: pointer;
+      transition: all var(--t-base);
+    }
+    .payment-option:hover { border-color: var(--signal); }
+    .payment-option.is-selected { border-color: var(--signal); background: var(--signal-dim); }
+    .payment-option__radio { display: none; }
+    .payment-option__icon {
+      width: 40px; height: 40px;
+      border-radius: 8px;
+      background: var(--panel);
+      display: grid; place-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+    .payment-option__info { flex: 1; }
+    .payment-option__name { font-weight: 600; }
+    .payment-option__check {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      display: grid; place-items: center;
+      font-size: 0.7rem;
+      color: transparent;
+      flex-shrink: 0;
+      transition: all var(--t-base);
+    }
+    .payment-option.is-selected .payment-option__check {
+      border-color: var(--signal);
+      background: var(--signal);
+      color: #120900;
+    }
+  </style>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetBooking, apiInitPayment, apiPaymentCallback, apiCreateBooking } from "../js/api.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { getBookingFlow, clearBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
+    import { formatVND, formatDate, formatTime } from "../js/api.js";
+    import { isLoggedIn, restoreSession, getUser } from "../js/auth.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const flow = getBookingFlow();
+    const bookingCode = new URLSearchParams(location.search).get("booking") || flow.bookingCode;
+
+    if (!bookingCode && !flow.flight) {
+      navigate("/");
+    }
+
+    let booking = null;
+    let selectedMethod = null;
+
+    async function loadBooking() {
+      try {
+        booking = await apiGetBooking(bookingCode);
+        saveBookingFlow({ bookingCode, booking });
+        renderSummary();
+      } catch {
+        alert("Không tìm thấy booking. Vui lòng thử lại.");
+        navigate("/");
+      }
+    }
+
+    async function init() {
+      if (!bookingCode) {
+        // Construct temporary booking from flow data
+        booking = {
+          origin_code: flow.flight?.origin_code,
+          dest_code: flow.flight?.dest_code,
+          origin_city: flow.flight?.origin_city,
+          dest_city: flow.flight?.dest_city,
+          flight_number: flow.flight?.flight_number,
+          departure_time: flow.flight?.departure_time,
+          flight_date: flow.flight?.flight_date,
+          seat_number: flow.seatNumber,
+          total_price: flow.totalPrice,
+          payment_status: "unpaid",
+          passenger_name: "",
+        };
+
+        // Show passenger form
+        document.getElementById("passengerFormContainer").style.display = "block";
+        document.getElementById("paymentPanelTitle").textContent = "Thông tin & Thanh toán";
+        document.getElementById("paymentPanelDesc").textContent = "Vui lòng điền thông tin liên hệ và chọn phương thức thanh toán.";
+
+        // Autofill if logged in
+        await restoreSession();
+        if (isLoggedIn()) {
+          const u = getUser();
+          if (u) {
+            document.getElementById("passengerName").value = u.full_name || "";
+            document.getElementById("passengerEmail").value = u.email || "";
+            document.getElementById("passengerPhone").value = u.phone || "";
+            booking.passenger_name = u.full_name || "";
+          }
+        }
+
+        renderSummary();
+
+        const nameInput = document.getElementById("passengerName");
+        if (nameInput) {
+          nameInput.addEventListener("input", (e) => {
+            const val = e.target.value.trim();
+            document.getElementById("summaryPassengerName").textContent = val || "—";
+          });
+        }
+        setupPaymentOptions();
+      } else {
+        await loadBooking();
+      }
+    }
+
+    function renderSummary() {
+      const b = booking;
+      const seatList = String(b.seat_number || "")
+        .split(",")
+        .map(seat => seat.trim())
+        .filter(Boolean);
+      const ticketCount = Math.max(1, seatList.length);
+      document.getElementById("bookingSummary").innerHTML = `
+        <div style="display:grid;gap:var(--sp-3);">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="mono font-bold text-xl">${b.origin_code || "—"} → ${b.dest_code || "—"}</span>
+            <span class="badge badge--signal">${b.flight_number || "—"}</span>
+          </div>
+          <div class="text-muted text-sm">${b.origin_city || ""} → ${b.dest_city || ""}</div>
+          <hr style="border-color:var(--border);" />
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3);">
+            <div>
+              <div class="text-xs text-muted">Khởi hành</div>
+              <div class="mono font-bold">${String(b.departure_time||"").substring(0,5)}</div>
+            </div>
+            <div>
+              <div class="text-xs text-muted">Ngày</div>
+              <div class="mono">${b.flight_date || "—"}</div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-muted">Hành khách</div>
+            <div id="summaryPassengerName">${b.passenger_name || b.user_name || "—"}</div>
+          </div>
+          <div>
+            <div class="text-xs text-muted">Số vé</div>
+            <div class="mono font-bold">${ticketCount} vé</div>
+          </div>
+          <div>
+            <div class="text-xs text-muted">Ghế</div>
+            <div class="mono font-bold">${seatList.length ? seatList.join(", ") : "—"}</div>
+          </div>
+          <hr style="border-color:var(--border);" />
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="text-sm text-muted">Tổng cộng</span>
+            <span class="mono font-bold text-signal" style="font-size:1.3rem;">${formatVND(b.total_price)}</span>
+          </div>
+        </div>`;
+
+      // If already paid, show confirmation
+      if (b.payment_status === "paid") {
+        document.getElementById("paymentActions").innerHTML = `
+          <div class="alert alert--ok" style="margin-bottom:var(--sp-4);">
+            <strong>Đã thanh toán</strong> — Vé của bạn đã được thanh toán thành công.
+          </div>
+          <a href="/confirmation?code=${b.booking_code}" class="btn btn--primary btn--lg" style="width:100%;text-align:center;">
+            Xem xác nhận đặt vé
+          </a>`;
+        return;
+      }
+
+      setupPaymentOptions();
+    }
+
+    function setupPaymentOptions() {
+      const radios = document.querySelectorAll('input[name="method"]');
+      const payBtn = document.getElementById("payNowBtn");
+
+      radios.forEach(radio => {
+        const label = radio.closest(".payment-option");
+
+        radio.addEventListener("change", () => {
+          radios.forEach(r => r.closest(".payment-option").classList.remove("is-selected"));
+          label.classList.add("is-selected");
+          selectedMethod = radio.value;
+
+          const labels = { vnpay: "Thanh toán qua VNPay", momo: "Thanh toán qua MoMo", cash: "Thanh toán tiền mặt" };
+          payBtn.disabled = false;
+          payBtn.textContent = labels[selectedMethod] || "Thanh toán";
+        });
+      });
+
+      payBtn.addEventListener("click", async () => {
+        if (!selectedMethod || !booking) return;
+
+        payBtn.disabled = true;
+        payBtn.innerHTML = `<span class="spinner"></span> Đang xử lý…`;
+
+        try {
+          if (!bookingCode) {
+            // New booking flow: validate form inputs
+            const name = document.getElementById("passengerName").value.trim();
+            const email = document.getElementById("passengerEmail").value.trim();
+            const phone = document.getElementById("passengerPhone").value.trim();
+
+            if (!name) throw new Error("Vui lòng nhập Họ tên hành khách.");
+            if (!email) throw new Error("Vui lòng nhập Email liên hệ.");
+            if (!phone) throw new Error("Vui lòng nhập Số điện thoại liên hệ.");
+
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+              throw new Error("Vui lòng nhập Email đúng định dạng (VD: email@example.com).");
+            }
+
+            const phoneRegex = /^[0-9]{10}$/;
+            if (!phoneRegex.test(phone)) {
+              throw new Error("Vui lòng nhập Số điện thoại đúng định dạng (10 chữ số).");
+            }
+
+            // Create booking record
+            const newBooking = await apiCreateBooking({
+              flight_id: Number(flow.flight.id),
+              passenger_name: name,
+              passenger_email: email,
+              passenger_phone: phone,
+              seat_number: flow.seatNumber,
+              total_price: flow.totalPrice,
+            });
+
+            // Update local flow state
+            saveBookingFlow({
+              ...flow,
+              bookingCode: newBooking.booking_code,
+              booking: newBooking
+            });
+            booking = newBooking;
+          }
+
+          const result = await apiInitPayment(booking.id, selectedMethod);
+
+          if (selectedMethod === "cash") {
+            // Cash: mark as paid immediately (mock)
+            await apiPaymentCallback(result.transaction_id, "success");
+            navigate(`/confirmation?code=${booking.booking_code}`);
+          } else {
+            // VNPay/MoMo: redirect to payment URL (mock)
+            if (result.payment_url) {
+              // In production: window.location.href = result.payment_url;
+              // For demo: simulate callback after 2s
+              const proceed = confirm(
+                `Demo mode:\n\nPhương thức: ${selectedMethod.toUpperCase()}\nMã giao dịch: ${result.transaction_id}\nSố tiền: ${formatVND(result.amount)}\n\nNhấn OK để mô phỏng thanh toán thành công.`
+              );
+              if (proceed) {
+                await apiPaymentCallback(result.transaction_id, "success");
+                navigate(`/confirmation?code=${booking.booking_code}`);
+              } else {
+                await apiPaymentCallback(result.transaction_id, "failed");
+                throw new Error("Thanh toán bị hủy");
+              }
+            }
+          }
+        } catch (err) {
+          document.getElementById("paymentError").className = "alert alert--error";
+          document.getElementById("paymentError").innerHTML = `<strong>Lỗi:</strong> ${err.message}`;
+          document.getElementById("paymentError").style.display = "block";
+          payBtn.disabled = false;
+          payBtn.textContent = "Thử lại";
+        }
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

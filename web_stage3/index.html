@@ -3,163 +3,301 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Stage 3 Flight Face Registration Console</title>
-  <meta name="description" content="Prototype Web UI for creating passenger bookings and optionally registering face embeddings to the AIoT Flight Face backend." />
+  <title>AIoT Flight — Đặt vé máy bay</title>
+  <meta name="description" content="Hệ thống đặt vé máy bay trực tuyến với check-in bằng khuôn mặt." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23ff6b1a' width='100' height='100'/><text y='.9em' x='50%' text-anchor='middle' font-size='80'>✈</text></svg>" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+  <link rel="stylesheet" href="./css/layout.css" />
+  <link rel="stylesheet" href="./css/pages/home.css" />
 </head>
 <body>
-  <main class="shell">
-    <section class="hero" aria-labelledby="page-title">
-      <div class="hero__mark" aria-hidden="true">03</div>
-      <div>
-        <p class="eyebrow">AIoT Flight Face Lookup · Stage 3 Prototype</p>
-        <h1 id="page-title">Web → FastAPI → Qdrant registration console</h1>
-        <p class="hero__copy">Tạo passenger, flight, booking và chọn có đăng ký face hay không. Mã hóa AES-GCM-256 được tự động áp dụng khi truyền tải vector nhận diện khuôn mặt.</p>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page" id="main-content">
+      <!-- Hero -->
+      <div class="shell">
+        <div class="home-hero">
+          <div class="home-hero__content">
+            <div class="home-hero__eyebrow">Hệ thống đặt vé máy bay</div>
+            <h1>Khám phá <em>bầu trời</em><br />đặt vé dễ dàng</h1>
+            <p>Check-in tự động bằng nhận diện khuôn mặt. An toàn, nhanh chóng, tiện lợi.</p>
+          </div>
+          <div class="home-hero__status">
+            <div class="status-card">
+              <div class="status-card__label">Trạng thái máy chủ</div>
+              <div class="status-card__value" id="healthStatus">Đang kiểm tra…</div>
+            </div>
+            <div class="status-card">
+              <div class="status-card__label">Tìm kiếm nhanh</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                <button class="btn btn--sm btn--ghost" data-quick="HAN→SGN">HAN → SGN</button>
+                <button class="btn btn--sm btn--ghost" data-quick="SGN→HAN">SGN → HAN</button>
+                <button class="btn btn--sm btn--ghost" data-quick="DAD→HAN">DAD → HAN</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search card -->
+        <div class="search-card">
+          <div class="search-card__header">
+            <span style="font-size:1.5rem;">🔍</span>
+            <h2>Tìm chuyến bay</h2>
+          </div>
+
+          <div class="search-card__tabs" role="tablist">
+            <button class="search-card__tab is-active" data-trip="oneway" role="tab" aria-selected="true">Một chiều</button>
+            <button class="search-card__tab" data-trip="roundtrip" role="tab" aria-selected="false">Khứ hồi</button>
+          </div>
+
+          <div class="search-card__body">
+            <form class="search-form" id="searchForm" novalidate>
+              <div class="search-form__row">
+                <div class="field">
+                  <label class="label" for="origin">Từ</label>
+                  <select id="origin" name="origin" class="select" required>
+                    <option value="">Chọn sân bay</option>
+                  </select>
+                </div>
+
+                <button type="button" class="swap-btn" id="swapBtn" title="Đổi điểm đi/đến">⇄</button>
+
+                <div class="field">
+                  <label class="label" for="destination">Đến</label>
+                  <select id="destination" name="destination" class="select" required>
+                    <option value="">Chọn sân bay</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label class="label" for="departureDate">Ngày đi</label>
+                  <input id="departureDate" name="departure_date" type="date" class="input" required />
+                </div>
+
+                <button type="submit" class="btn btn--primary" id="searchBtn">
+                  Tìm kiếm
+                </button>
+              </div>
+
+              <div class="search-form__row search-form__row--passengers" id="roundtripRow" style="display:none;">
+                <div class="field">
+                  <label class="label" for="returnDate">Ngày về</label>
+                  <input id="returnDate" name="return_date" type="date" class="input" />
+                </div>
+              </div>
+
+              <div class="search-form__row search-form__row--passengers">
+                <div class="field">
+                  <label class="label">Hành khách</label>
+                  <div class="passenger-counter">
+                    <button type="button" id="paxMinus" disabled>−</button>
+                    <span class="passenger-counter__value" id="paxCount">1</span>
+                    <button type="button" id="paxPlus">+</button>
+                    <span style="color:var(--muted);font-size:var(--text-sm);margin-left:4px;">hành khách</span>
+                  </div>
+                </div>
+              </div>
+            </form>
+
+            <div class="quick-routes" id="quickRoutes">
+              <span class="quick-routes__label">Tuyến phổ biến:</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats bar -->
+        <div class="stats-bar" id="statsBar">
+          <div class="stat-item">
+            <div class="stat-item__value" id="statFlights">—</div>
+            <div class="stat-item__label">Chuyến bay hôm nay</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-item__value" id="statSeats">—</div>
+            <div class="stat-item__label">Ghế trống</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-item__value" id="statRoutes">—</div>
+            <div class="stat-item__label">Tuyến bay</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-item__value" id="statPassengers">—</div>
+            <div class="stat-item__label">Hành khách check-in</div>
+          </div>
+        </div>
       </div>
-      <div class="health-panel" aria-label="Backend status">
-        <button id="checkHealthBtn" class="button button--ghost" type="button">Check backend</button>
-        <div id="healthText" class="status-line">Not checked</div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight — Hệ thống đặt vé máy bay</span>
+        <span>Powered by AIoT Face Recognition</span>
       </div>
-    </section>
+    </footer>
+  </div>
 
-    <section class="workspace">
-      <form id="registrationForm" class="panel form-panel">
-        <div class="panel__header">
-          <span class="step-badge">A</span>
-          <div>
-            <h2>Create booking</h2>
-            <p>Thông tin hành khách và chuyến bay để tạo booking metadata.</p>
-          </div>
-        </div>
+  <script type="module">
+    import { render } from "./js/components/nav.js";
+    import { apiHealth, apiGetAirports, apiSearchFlights } from "./js/api.js";
+    import { navigate } from "./js/router.js";
+    import { registerRoutes } from "./js/routes.js";
+    import { saveBookingFlow, clearStaleFlow } from "./js/storage.js";
 
-        <div class="field-grid">
-          <label>Passenger name
-            <input id="passengerName" name="passengerName" required value="Nguyen Van Prototype" />
-          </label>
-          <label>Email
-            <input id="passengerEmail" name="passengerEmail" required type="email" />
-          </label>
-          <label>Phone
-            <input id="passengerPhone" name="passengerPhone" value="0900000003" />
-          </label>
-          <label>Flight code
-            <input id="flightCode" name="flightCode" required />
-          </label>
-          <label>Destination
-            <input id="destination" name="destination" required value="Ha Noi" />
-          </label>
-          <label>Gate
-            <input id="gate" name="gate" value="C7" />
-          </label>
-          <label>Departure time
-            <input id="departureTime" name="departureTime" required value="2026-05-24T18:00:00+07:00" />
-          </label>
-          <label>Boarding time
-            <input id="boardingTime" name="boardingTime" value="2026-05-24T17:20:00+07:00" />
-          </label>
-          <label>Seat number
-            <input id="seatNumber" name="seatNumber" value="14F" />
-          </label>
-        </div>
+    registerRoutes();
+    clearStaleFlow();
+    render();
 
-        <div class="option-card">
-          <div>
-            <strong>Register face after booking</strong>
-            <span>Nếu bật, chọn upload ảnh / webcam / dataset để tạo embedding thật bằng V9 + ArcFace P3.</span>
-          </div>
-          <label class="switch" aria-label="Toggle face registration">
-            <input id="registerFace" type="checkbox" checked />
-            <span></span>
-          </label>
-        </div>
+    // ── Load airports ─────────────────────────────────────────────────────────
+    const originEl = document.getElementById("origin");
+    const destEl   = document.getElementById("destination");
+    const quickEl  = document.getElementById("quickRoutes");
 
-        <div class="face-source" aria-label="Face source selector">
-          <div class="source-tabs" role="group" aria-label="Face source options">
-            <button class="source-tab is-active" id="sourceUploadBtn" type="button" data-source="upload">Upload</button>
-            <button class="source-tab" id="sourceCameraBtn" type="button" data-source="camera">Webcam</button>
-            <button class="source-tab" id="sourceDatasetBtn" type="button" data-source="dataset">Dataset</button>
-          </div>
-          <div class="source-grid">
-            <label class="source-control" id="uploadControl">Upload face image
-              <input id="faceFileInput" type="file" accept="image/*" />
-            </label>
-            <div class="source-control is-hidden" id="cameraControl">
-              <span>Webcam burst capture</span>
-              <button id="startCameraBtn" class="button button--ghost" type="button">Start webcam</button>
-              <button id="captureCameraBtn" class="button button--ghost" type="button" disabled>Capture 12-frame burst</button>
-            </div>
-            <div class="source-control is-hidden" id="datasetControl">
-              <span>Dataset sample</span>
-              <button id="loadDatasetBtn" class="button button--ghost" type="button">Load sample image</button>
-            </div>
-            <div class="face-preview">
-              <video id="cameraVideo" playsinline muted></video>
-              <canvas id="facePreviewCanvas" width="224" height="224"></canvas>
-            </div>
-          </div>
-          <div id="embeddingStatus" class="status-line">Models not loaded yet.</div>
-          <div id="qualityText" class="quality-strip">Quality gate waits for a face sample.</div>
-        </div>
+    async function loadAirports() {
+      try {
+        const airports = await apiGetAirports();
+        const opts = airports.map(a =>
+          `<option value="${a.code}">${a.code} — ${a.city} (${a.name})</option>`
+        ).join("");
+        originEl.innerHTML = `<option value="">Chọn sân bay</option>${opts}`;
+        destEl.innerHTML   = `<option value="">Chọn sân bay</option>${opts}`;
 
-        <div id="submitReadiness" class="submit-readiness submit-readiness--fallback" role="status" aria-live="polite">
-          <strong id="readinessTitle">Fallback vector mode</strong>
-          <span id="readinessDetail">Face registration is ON, but no real embedding is selected yet.</span>
-        </div>
+        // Quick route chips
+        const chips = airports.slice(0, 4).map(a =>
+          `<button class="route-chip" data-from="${a.code}">${a.code}</button>`
+        ).join("");
+        quickEl.innerHTML += chips;
+      } catch (err) {
+        // Fallback
+        originEl.innerHTML = `<option value="HAN">HAN — Hà Nội (Nội Bài)</option>
+          <option value="SGN">SGN — TP.HCM (Tân Sơn Nhất)</option>
+          <option value="DAD">DAD — Đà Nẵng (Đà Nẵng)</option>`;
+        destEl.innerHTML = originEl.innerHTML;
+      }
+    }
 
-        <div class="actions">
-          <button id="submitBtn" class="button button--primary" type="submit">Create booking flow</button>
-          <button id="resetBtn" class="button button--ghost" type="button">Reset sample</button>
-        </div>
-      </form>
+    // ── Health check ─────────────────────────────────────────────────────────
+    async function checkHealth() {
+      const el = document.getElementById("healthStatus");
+      el.className = "status-card__value status-card__value--loading";
+      el.textContent = "Đang kết nối…";
+      try {
+        await apiHealth();
+        el.className = "status-card__value";
+        el.style.color = "var(--ok)";
+        el.textContent = "Hoạt động tốt ✓";
+      } catch {
+        el.className = "status-card__value status-card__value--error";
+        el.textContent = "Offline — Dùng dữ liệu demo";
+      }
+    }
 
-      <aside class="panel telemetry-panel">
-        <div class="panel__header">
-          <span class="step-badge">B</span>
-          <div>
-            <h2>Runtime telemetry</h2>
-            <p>Trạng thái API, booking, Qdrant point và sync cache.</p>
-          </div>
-        </div>
+    // ── Trip type toggle ────────────────────────────────────────────────────
+    document.querySelectorAll(".search-card__tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".search-card__tab").forEach(t => {
+          t.classList.remove("is-active");
+          t.setAttribute("aria-selected", "false");
+        });
+        tab.classList.add("is-active");
+        tab.setAttribute("aria-selected", "true");
+        const trip = tab.dataset.trip;
+        document.getElementById("roundtripRow").style.display = trip === "roundtrip" ? "grid" : "none";
+      });
+    });
 
-        <div class="metric-stack">
-          <div class="metric">
-            <span>API base</span>
-            <strong id="apiBaseText">http://127.0.0.1:8010</strong>
-          </div>
-          <div class="metric">
-            <span>Last booking</span>
-            <strong id="bookingText">None</strong>
-          </div>
-          <div class="metric">
-            <span>Face point</span>
-            <strong id="pointText">None</strong>
-          </div>
-          <div class="metric">
-            <span>Sync count</span>
-            <strong id="syncText">0</strong>
-          </div>
-          <div class="metric">
-            <span>Submit mode</span>
-            <strong id="submitModeText">Fallback vector</strong>
-          </div>
-          <div class="metric">
-            <span>AES-GCM Key</span>
-            <code style="font-size: 0.75rem; word-break: break-all; color: var(--color-text-dim);">94c8e763a8a3a31e2474db62c82e0fb58cc2a77ef7cb73f1d8c117b4abdc3d9d</code>
-          </div>
-        </div>
+    // ── Swap button ─────────────────────────────────────────────────────────
+    document.getElementById("swapBtn").addEventListener("click", () => {
+      const tmp = originEl.value;
+      originEl.value = destEl.value;
+      destEl.value = tmp;
+    });
 
-        <button id="matchBtn" class="button button--secondary" type="button" disabled>Run match test</button>
-        <pre id="logOutput" class="log-output" aria-live="polite">Ready. Start by checking backend or creating a booking.</pre>
-      </aside>
-    </section>
-  </main>
+    // ── Passenger counter ────────────────────────────────────────────────────
+    let paxCount = 1;
+    const paxEl = document.getElementById("paxCount");
+    document.getElementById("paxMinus").addEventListener("click", () => {
+      if (paxCount > 1) { paxCount--; paxEl.textContent = paxCount; updatePaxBtns(); }
+    });
+    document.getElementById("paxPlus").addEventListener("click", () => {
+      if (paxCount < 9) { paxCount++; paxEl.textContent = paxCount; updatePaxBtns(); }
+    });
+    function updatePaxBtns() {
+      document.getElementById("paxMinus").disabled = paxCount <= 1;
+      document.getElementById("paxPlus").disabled  = paxCount >= 9;
+    }
 
-  <script src="./app.js"></script>
+    // ── Set default date ────────────────────────────────────────────────────
+    const today = new Date();
+    const depInput = document.getElementById("departureDate");
+    depInput.value = today.toISOString().substring(0, 10);
+    depInput.min   = today.toISOString().substring(0, 10);
+    const retInput = document.getElementById("returnDate");
+    const retDate  = new Date(today); retDate.setDate(retDate.getDate() + 7);
+    retInput.value = retDate.toISOString().substring(0, 10);
+    retInput.min   = today.toISOString().substring(0, 10);
+
+    // ── Search form submit ───────────────────────────────────────────────────
+    document.getElementById("searchForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const origin      = originEl.value;
+      const destination = destEl.value;
+      const date       = depInput.value;
+      const passengers  = paxCount;
+
+      if (!origin || !destination) {
+        alert("Vui lòng chọn điểm đi và điểm đến.");
+        return;
+      }
+      if (origin === destination) {
+        alert("Điểm đi và điểm đến không được trùng nhau.");
+        return;
+      }
+
+      saveBookingFlow({ origin, destination, date, passengers });
+
+      const params = new URLSearchParams({ origin, destination, date, passengers });
+      navigate(`/search?${params}`);
+    });
+
+    // ── Quick route chips ───────────────────────────────────────────────────
+    quickEl.addEventListener("click", async (e) => {
+      const chip = e.target.closest(".route-chip");
+      if (!chip) return;
+      const fromCode = chip.dataset.from;
+      // Pick a random different airport
+      const airports = [...originEl.options].map(o => o.value).filter(v => v && v !== fromCode);
+      if (!airports.length) return;
+      const toCode = airports[Math.floor(Math.random() * airports.length)];
+      originEl.value = fromCode;
+      destEl.value   = toCode;
+      depInput.focus();
+    });
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    loadAirports();
+    checkHealth();
+
+    // Animate stat counters
+    function animateCounter(el, target) {
+      let current = 0;
+      const step = Math.ceil(target / 30);
+      const iv = setInterval(() => {
+        current = Math.min(current + step, target);
+        el.textContent = current.toLocaleString("vi-VN");
+        if (current >= target) clearInterval(iv);
+      }, 30);
+    }
+    // Set demo stats after a delay
+    setTimeout(() => {
+      animateCounter(document.getElementById("statFlights"), 127);
+      animateCounter(document.getElementById("statSeats"), 1842);
+      animateCounter(document.getElementById("statRoutes"), 24);
+      animateCounter(document.getElementById("statPassengers"), 96);
+    }, 600);
+  </script>
 </body>
 </html>

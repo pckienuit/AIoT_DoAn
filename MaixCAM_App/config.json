@@ -1,5 +1,5 @@
 {
-  "server_url": "http://10.154.35.101:8000",
+  "server_url": "http://10.154.36.100:8000",
   "flight_ids": [12],
   "sync_interval_sec": 300,
   "cache_dir": "/root/cache",

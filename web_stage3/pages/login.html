@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Đăng nhập — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell" style="--shell-max: 480px;">
+        <div class="auth-card" id="authCard">
+          <div class="auth-card__header">
+            <div class="auth-card__logo">✈</div>
+            <h1>Đăng nhập</h1>
+            <p class="text-muted text-sm">Chào mừng bạn quay trở lại AIoT Flight.</p>
+          </div>
+
+          <div class="auth-card__body">
+            <div id="loginError" style="display:none;margin-bottom:var(--sp-4);"></div>
+
+            <form id="loginForm" novalidate>
+              <div class="field">
+                <label class="label" for="email">Email</label>
+                <input id="email" name="email" type="email" class="input"
+                  placeholder="email@example.com" autocomplete="email"
+                  required />
+              </div>
+
+              <div class="field" style="margin-top:var(--sp-4);">
+                <label class="label" for="password">Mật khẩu</label>
+                <input id="password" name="password" type="password" class="input"
+                  placeholder="••••••••" autocomplete="current-password"
+                  required />
+              </div>
+
+              <div id="formError" style="display:none;margin-top:var(--sp-3);"></div>
+
+              <button type="submit" class="btn btn--primary btn--lg" id="loginBtn"
+                style="width:100%;margin-top:var(--sp-5);">
+                Đăng nhập
+              </button>
+            </form>
+          </div>
+
+          <div class="auth-card__footer">
+            <p class="text-sm text-muted">
+              Chưa có tài khoản?
+              <a href="/register" class="link">Đăng ký ngay</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <style>
+    .auth-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .auth-card__header {
+      padding: var(--sp-8) var(--sp-6) var(--sp-5);
+      text-align: center;
+      background: var(--panel-strong);
+      border-bottom: 1px solid var(--border);
+    }
+    .auth-card__logo {
+      width: 56px; height: 56px;
+      background: var(--signal-dim);
+      border: 1px solid var(--signal);
+      border-radius: var(--radius);
+      display: grid; place-items: center;
+      font-size: 1.5rem;
+      margin: 0 auto var(--sp-4);
+    }
+    .auth-card__header h1 {
+      font-size: var(--text-2xl);
+      margin-bottom: var(--sp-1);
+    }
+    .auth-card__body {
+      padding: var(--sp-6);
+    }
+    .auth-card__footer {
+      padding: var(--sp-5) var(--sp-6);
+      background: var(--panel-strong);
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .link { color: var(--signal); }
+    .link:hover { text-decoration: underline; }
+  </style>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { login } from "../js/auth.js";
+    import { navigate } from "../js/router.js";
+
+    render();
+
+    // Check if already logged in
+    import { isLoggedIn } from "../js/auth.js";
+    if (isLoggedIn()) {
+      const returnUrl = new URLSearchParams(location.search).get("return") || "/";
+      navigate(returnUrl);
+    }
+
+    const form = document.getElementById("loginForm");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const loginBtn = document.getElementById("loginBtn");
+    const errorEl = document.getElementById("formError");
+
+    function showError(msg) {
+      errorEl.className = "alert alert--error";
+      errorEl.textContent = msg;
+      errorEl.style.display = "block";
+    }
+
+    function clearError() {
+      errorEl.style.display = "none";
+    }
+
+    emailInput?.addEventListener("input", clearError);
+    passwordInput?.addEventListener("input", clearError);
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+
+      if (!email) { emailInput.focus(); return; }
+      if (!password) { passwordInput.focus(); return; }
+
+      loginBtn.disabled = true;
+      loginBtn.innerHTML = `<span class="spinner"></span> Đang đăng nhập…`;
+
+      try {
+        await login(email, password);
+        const returnUrl = new URLSearchParams(location.search).get("return") || "/";
+        navigate(returnUrl);
+      } catch (err) {
+        showError(err.message || "Đăng nhập thất bại. Vui lòng thử lại.");
+        loginBtn.disabled = false;
+        loginBtn.textContent = "Đăng nhập";
+      }
+    });
+  </script>
+</body>
+</html>

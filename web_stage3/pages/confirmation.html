@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Xác nhận đặt vé — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/tickets.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    @media print {
+      /* Hide all non-ticket elements */
+      #nav-placeholder,
+      .confirmation-hero,
+      .panel,
+      .footer,
+      .ticket__footer,
+      #copyBookingCodeBtn {
+        display: none !important;
+      }
+
+      /* Reset page backgrounds and text colors for high-contrast printing */
+      body, html {
+        background: #ffffff !important;
+        color: #000000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      #app, main, .shell, #confirmationContent {
+        background: transparent !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        display: block !important;
+        width: 100% !important;
+        box-shadow: none !important;
+      }
+
+      /* Style the ticket card for printing */
+      .ticket {
+        border: 2px solid #000000 !important;
+        background: #ffffff !important;
+        color: #000000 !important;
+        max-width: 650px !important;
+        margin: 20px auto !important;
+        box-shadow: none !important;
+        page-break-inside: avoid;
+      }
+
+      /* Force background color of the orange header when printing */
+      .ticket__header {
+        background-color: #ff6b1a !important;
+        color: #120900 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        border-bottom: 2px solid #000000 !important;
+      }
+
+      .ticket__airline, .booking-code, .text-xs {
+        color: #120900 !important;
+      }
+
+      /* Adjust route styles for print readability */
+      .ticket__airport-code, .ticket__time {
+        color: #000000 !important;
+      }
+
+      .ticket__airport-city, .ticket__label {
+        color: #555555 !important;
+      }
+
+      .ticket__arrow {
+        color: #ff6b1a !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .ticket__route {
+        border-bottom: 1px dashed #000000 !important;
+      }
+
+      .ticket__field {
+        border-bottom: 1px solid #dddddd !important;
+      }
+
+      .ticket__field--highlight .ticket__value {
+        color: #ff6b1a !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        font-weight: 800 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <!-- Success hero -->
+        <div class="confirmation-hero" id="confirmationHero">
+          <div class="confirmation-hero__icon">✓</div>
+          <h1 class="confirmation-hero__title">Đặt vé thành công!</h1>
+          <p class="confirmation-hero__sub">Cảm ơn bạn đã đặt vé. Dưới đây là thông tin chi tiết.</p>
+        </div>
+
+        <!-- Ticket -->
+        <div class="page__grid page__grid--sidebar" id="confirmationContent">
+          <div class="ticket" id="ticketSection">
+            <div class="ticket__header">
+              <div>
+                <div class="ticket__airline">AIoT Flight</div>
+                <div class="ticket__flight-num" id="ticketFlightNum">—</div>
+              </div>
+              <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end;">
+                <div style="display:flex; align-items:center; gap:var(--sp-1); position:relative;">
+                  <div class="booking-code" id="ticketBookingCode" style="color: #120900; cursor:pointer;" title="Click để sao chép">—</div>
+                  <button id="copyBookingCodeBtn" style="background:none; border:none; padding:4px; cursor:pointer; color:#120900; opacity:0.8; display:flex; align-items:center; justify-content:center; position:relative;" title="Sao chép">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </div>
+                <div class="text-xs" style="margin-top:4px; color: rgba(18, 9, 0, 0.75); font-weight: 600;">Mã đặt chỗ</div>
+              </div>
+            </div>
+
+            <div class="ticket__body">
+              <div class="ticket__route">
+                <div class="ticket__airport">
+                  <div class="ticket__airport-code" id="ticketOriginCode">—</div>
+                  <div class="ticket__airport-city" id="ticketOriginCity">—</div>
+                  <div class="ticket__time" id="ticketDepTime">—</div>
+                </div>
+                <div class="ticket__arrow">✈</div>
+                <div class="ticket__airport">
+                  <div class="ticket__airport-code" id="ticketDestCode">—</div>
+                  <div class="ticket__airport-city" id="ticketDestCity">—</div>
+                  <div class="ticket__time" id="ticketArrTime">—</div>
+                </div>
+              </div>
+
+              <div class="ticket__details">
+                <div class="ticket__field">
+                  <span class="ticket__label">Khách</span>
+                  <span class="ticket__value" id="ticketPassenger">—</span>
+                </div>
+                <div class="ticket__field">
+                  <span class="ticket__label">Ngày bay</span>
+                  <span class="ticket__value" id="ticketDate">—</span>
+                </div>
+                <div class="ticket__field">
+                  <span class="ticket__label">Ghế</span>
+                  <span class="ticket__value mono" id="ticketSeat">—</span>
+                </div>
+                <div class="ticket__field">
+                  <span class="ticket__label">Thanh toán</span>
+                  <span class="ticket__value" id="ticketPayment">—</span>
+                </div>
+                <div class="ticket__field ticket__field--highlight">
+                  <span class="ticket__label">Tổng cộng</span>
+                  <span class="ticket__value mono text-signal" id="ticketPrice">—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="ticket__footer">
+              <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;justify-content:center;">
+                <button id="printBtn" class="btn btn--ghost btn--sm">🖨 In vé</button>
+                <button id="downloadBtn" class="btn btn--ghost btn--sm">💾 Lưu ảnh</button>
+                <a href="/checkin" class="btn btn--accent btn--sm" id="checkinLink" style="display:none;">◈ Check-in</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Actions sidebar -->
+          <div class="panel">
+            <div class="panel__header">
+              <h2>Tiếp theo</h2>
+            </div>
+            <div class="panel__body" style="display:grid;gap:var(--sp-4);">
+              <div class="next-step">
+                <div class="next-step__num">1</div>
+                <div>
+                  <div class="next-step__title">Lưu mã đặt chỗ</div>
+                  <div class="next-step__desc text-xs text-muted">Ghi lại hoặc chụp màn hình mã <strong class="mono" id="sidebarCode">—</strong> để làm thủ tục.</div>
+                </div>
+              </div>
+              <div class="next-step" id="stepFaceRegister">
+                <div class="next-step__num">2</div>
+                <div>
+                  <div class="next-step__title">Đăng ký khuôn mặt</div>
+                  <div class="next-step__desc text-xs text-muted">Check-in tự động bằng nhận diện khuôn mặt tại sân bay.</div>
+                  <button id="registerFaceBtn" class="btn btn--primary btn--sm" style="margin-top:var(--sp-2);">
+                    Đăng ký ngay
+                  </button>
+                </div>
+              </div>
+              <div class="next-step">
+                <div class="next-step__num">3</div>
+                <div>
+                  <div class="next-step__title">Cảm ơn!</div>
+                  <div class="next-step__desc text-xs text-muted">Chúc bạn có chuyến đi tốt đẹp. Hẹn gặp lại tại AIoT Flight.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetBooking, apiFaceRegister } from "../js/api.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearBookingFlow, clearStaleFlow } from "../js/storage.js";
+    import { formatVND } from "../js/api.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const bookingCode = new URLSearchParams(location.search).get("code");
+
+    if (!bookingCode) { navigate("/"); }
+
+    async function loadAndRender() {
+      try {
+        const booking = await apiGetBooking(bookingCode);
+        renderTicket(booking);
+        clearBookingFlow();
+      } catch {
+        document.getElementById("confirmationHero").innerHTML = `
+          <div class="confirmation-hero__icon" style="color:var(--danger);">✗</div>
+          <h1>Không tìm thấy booking</h1>
+          <p class="text-muted">Vui lòng kiểm tra mã đặt chỗ.</p>
+          <a href="/" class="btn btn--primary" style="margin-top:var(--sp-5);">Tìm chuyến bay</a>`;
+        document.getElementById("confirmationContent").style.display = "none";
+      }
+    }
+
+    function renderTicket(b) {
+      const depTime = String(b.departure_time || "").substring(0, 5);
+      const arrTime = String(b.arrival_time || "").substring(0, 5);
+      const dateStr = formatDate(b.flight_date);
+      const paymentBadge = b.payment_status === "paid"
+        ? `<span class="badge badge--ok">Đã thanh toán</span>`
+        : `<span class="badge badge--warn">Chưa thanh toán</span>`;
+
+      document.getElementById("ticketFlightNum").textContent = b.flight_number || "—";
+      document.getElementById("ticketBookingCode").textContent = b.booking_code || "—";
+      document.getElementById("ticketOriginCode").textContent = b.origin_code || "—";
+      document.getElementById("ticketOriginCity").textContent = b.origin_city || "—";
+      document.getElementById("ticketDestCode").textContent = b.dest_code || "—";
+      document.getElementById("ticketDestCity").textContent = b.dest_city || "—";
+      document.getElementById("ticketDepTime").textContent = depTime;
+      document.getElementById("ticketArrTime").textContent = arrTime;
+      document.getElementById("ticketPassenger").textContent = b.passenger_name || b.user_name || "—";
+      document.getElementById("ticketDate").textContent = dateStr;
+      document.getElementById("ticketSeat").textContent = b.seat_number || "—";
+      document.getElementById("ticketPayment").innerHTML = paymentBadge;
+      document.getElementById("ticketPrice").textContent = formatVND(b.total_price);
+      document.getElementById("sidebarCode").textContent = b.booking_code || "—";
+
+      if (b.payment_status === "paid" && b.seat_number) {
+        document.getElementById("checkinLink").style.display = "";
+      }
+
+      if (b.face_registered) {
+        document.getElementById("stepFaceRegister").innerHTML = `
+          <div class="next-step__num" style="background:var(--ok);color:#090a07;">✓</div>
+          <div>
+            <div class="next-step__title">Khuôn mặt đã đăng ký</div>
+            <div class="next-step__desc text-xs text-muted">Bạn có thể check-in tự động tại sân bay.</div>
+          </div>`;
+      }
+    }
+
+    function formatDate(d) {
+      if (!d) return "—";
+      try {
+        return new Date(d).toLocaleDateString("vi-VN", { day: "2-digit", month: "short", year: "numeric" });
+      } catch { return d; }
+    }
+
+    // Print
+    document.getElementById("printBtn")?.addEventListener("click", () => window.print());
+
+    // Download as Image
+    document.getElementById("downloadBtn")?.addEventListener("click", () => {
+      const ticket = document.getElementById("ticketSection");
+      const downloadBtn = document.getElementById("downloadBtn");
+      if (!ticket || !downloadBtn) return;
+
+      const originalText = downloadBtn.innerHTML;
+      downloadBtn.innerHTML = "⌛ Đang tạo ảnh...";
+      downloadBtn.disabled = true;
+
+      const footer = ticket.querySelector(".ticket__footer");
+      const copyBtn = document.getElementById("copyBookingCodeBtn");
+
+      if (footer) footer.style.display = "none";
+      if (copyBtn) copyBtn.style.display = "none";
+
+      setTimeout(() => {
+        html2canvas(ticket, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: "#11130d"
+        }).then(canvas => {
+          if (footer) footer.style.display = "";
+          if (copyBtn) copyBtn.style.display = "";
+          downloadBtn.innerHTML = originalText;
+          downloadBtn.disabled = false;
+
+          const link = document.createElement("a");
+          link.download = `ticket-${bookingCode || 'flight'}.png`;
+          link.href = canvas.toDataURL("image/png");
+          link.click();
+        }).catch(err => {
+          console.error("Lỗi khi tải ảnh: ", err);
+          if (footer) footer.style.display = "";
+          if (copyBtn) copyBtn.style.display = "";
+          downloadBtn.innerHTML = originalText;
+          downloadBtn.disabled = false;
+        });
+      }, 100);
+    });
+
+    // Copy Booking Code
+    const ticketBookingCodeEl = document.getElementById("ticketBookingCode");
+    const copyBookingCodeBtnEl = document.getElementById("copyBookingCodeBtn");
+
+    function copyBookingCode() {
+      const code = ticketBookingCodeEl?.textContent;
+      if (!code || code === "—") return;
+      navigator.clipboard.writeText(code).then(() => {
+        const btn = document.getElementById("copyBookingCodeBtn");
+        if (!btn) return;
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00875A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        
+        // Show a small tooltip
+        const tooltip = document.createElement("span");
+        tooltip.textContent = "Đã sao chép!";
+        tooltip.style.position = "absolute";
+        tooltip.style.background = "#120900";
+        tooltip.style.color = "#ffffff";
+        tooltip.style.fontSize = "10px";
+        tooltip.style.padding = "2px 6px";
+        tooltip.style.borderRadius = "3px";
+        tooltip.style.bottom = "100%";
+        tooltip.style.right = "0";
+        tooltip.style.whiteSpace = "nowrap";
+        tooltip.style.marginBottom = "4px";
+        tooltip.style.boxShadow = "0 2px 4px rgba(0,0,0,0.2)";
+        tooltip.style.zIndex = "10";
+        btn.appendChild(tooltip);
+
+        setTimeout(() => {
+          btn.innerHTML = originalHTML;
+        }, 1500);
+      }).catch(err => {
+        console.error("Lỗi khi sao chép: ", err);
+      });
+    }
+
+    ticketBookingCodeEl?.addEventListener("click", copyBookingCode);
+    copyBookingCodeBtnEl?.addEventListener("click", copyBookingCode);
+
+    // Register face
+    document.getElementById("registerFaceBtn")?.addEventListener("click", () => {
+      navigate(`/register-face?booking=${bookingCode}`);
+    });
+
+    loadAndRender();
+  </script>
+</body>
+</html>

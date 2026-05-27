@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Đăng ký — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell" style="--shell-max: 520px;">
+        <div class="auth-card" id="authCard">
+          <div class="auth-card__header">
+            <div class="auth-card__logo">✈</div>
+            <h1>Tạo tài khoản</h1>
+            <p class="text-muted text-sm">Đăng ký để đặt vé nhanh hơn và quản lý vé dễ dàng.</p>
+          </div>
+
+          <div class="auth-card__body">
+            <div id="formError" style="display:none;margin-bottom:var(--sp-4);"></div>
+
+            <form id="registerForm" novalidate>
+              <div class="field">
+                <label class="label" for="fullName">Họ tên <span style="color:var(--danger)">*</span></label>
+                <input id="fullName" name="fullName" type="text" class="input"
+                  placeholder="VD: Nguyễn Văn A" required />
+              </div>
+
+              <div class="field" style="margin-top:var(--sp-4);">
+                <label class="label" for="email">Email <span style="color:var(--danger)">*</span></label>
+                <input id="email" name="email" type="email" class="input"
+                  placeholder="email@example.com" autocomplete="email"
+                  required />
+              </div>
+
+              <div class="field" style="margin-top:var(--sp-4);">
+                <label class="label" for="password">Mật khẩu <span style="color:var(--danger)">*</span></label>
+                <input id="password" name="password" type="password" class="input"
+                  placeholder="Ít nhất 6 ký tự" autocomplete="new-password"
+                  minlength="6" required />
+              </div>
+
+              <div class="field" style="margin-top:var(--sp-4);">
+                <label class="label" for="phone">Số điện thoại</label>
+                <input id="phone" name="phone" type="tel" class="input"
+                  placeholder="0901234567" />
+              </div>
+
+              <div class="alert alert--info" style="margin-top:var(--sp-4);">
+                <span>Thông tin cá nhân được bảo mật theo quy định.</span>
+              </div>
+
+              <button type="submit" class="btn btn--primary btn--lg" id="registerBtn"
+                style="width:100%;margin-top:var(--sp-5);">
+                Tạo tài khoản
+              </button>
+            </form>
+          </div>
+
+          <div class="auth-card__footer">
+            <p class="text-sm text-muted">
+              Đã có tài khoản?
+              <a href="/login" class="link">Đăng nhập ngay</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <style>
+    .auth-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .auth-card__header {
+      padding: var(--sp-8) var(--sp-6) var(--sp-5);
+      text-align: center;
+      background: var(--panel-strong);
+      border-bottom: 1px solid var(--border);
+    }
+    .auth-card__logo {
+      width: 56px; height: 56px;
+      background: var(--signal-dim);
+      border: 1px solid var(--signal);
+      border-radius: var(--radius);
+      display: grid; place-items: center;
+      font-size: 1.5rem;
+      margin: 0 auto var(--sp-4);
+    }
+    .auth-card__header h1 {
+      font-size: var(--text-2xl);
+      margin-bottom: var(--sp-1);
+    }
+    .auth-card__body {
+      padding: var(--sp-6);
+    }
+    .auth-card__footer {
+      padding: var(--sp-5) var(--sp-6);
+      background: var(--panel-strong);
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .link { color: var(--signal); }
+    .link:hover { text-decoration: underline; }
+  </style>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { register } from "../js/auth.js";
+    import { navigate } from "../js/router.js";
+
+    render();
+
+    import { isLoggedIn } from "../js/auth.js";
+    if (isLoggedIn()) {
+      navigate("/");
+    }
+
+    const form = document.getElementById("registerForm");
+    const fullNameInput = document.getElementById("fullName");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const phoneInput = document.getElementById("phone");
+    const registerBtn = document.getElementById("registerBtn");
+    const errorEl = document.getElementById("formError");
+
+    function showError(msg) {
+      errorEl.className = "alert alert--error";
+      errorEl.textContent = msg;
+      errorEl.style.display = "block";
+    }
+
+    function clearError() {
+      errorEl.style.display = "none";
+    }
+
+    [fullNameInput, emailInput, passwordInput].forEach(el => {
+      el?.addEventListener("input", clearError);
+    });
+
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const fullName = fullNameInput.value.trim();
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const phone = phoneInput.value.trim() || null;
+
+      if (!fullName) { fullNameInput.focus(); return; }
+      if (!email) { emailInput.focus(); return; }
+      if (!password || password.length < 6) {
+        showError("Mật khẩu phải có ít nhất 6 ký tự.");
+        passwordInput.focus();
+        return;
+      }
+
+      registerBtn.disabled = true;
+      registerBtn.innerHTML = `<span class="spinner"></span> Đang tạo tài khoản…`;
+
+      try {
+        await register({ full_name: fullName, email, password, phone });
+        navigate("/");
+      } catch (err) {
+        showError(err.message || "Đăng ký thất bại. Vui lòng thử lại.");
+        registerBtn.disabled = false;
+        registerBtn.textContent = "Tạo tài khoản";
+      }
+    });
+  </script>
+</body>
+</html>

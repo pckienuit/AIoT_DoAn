@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Đăng ký khuôn mặt — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <style>
+    .camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto var(--sp-4) auto;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      border: 2px solid var(--border);
+      overflow: hidden;
+    }
+    .camera-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .camera-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    .camera-guide-box {
+      width: 60%;
+      aspect-ratio: 1 / 1.2;
+      border: 2px dashed rgba(255, 107, 26, 0.5);
+      border-radius: 40% 40% 50% 50%;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+      transition: border-color 0.3s;
+    }
+    .camera-container.is-active .camera-guide-box {
+      border-color: var(--signal);
+      animation: scan-pulse 2s infinite ease-in-out;
+    }
+    .camera-container.is-done .camera-guide-box {
+      border-color: var(--ok);
+      border-style: solid;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.2);
+    }
+    @keyframes scan-pulse {
+      0%, 100% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.03); opacity: 1; }
+    }
+    .status-text {
+      text-align: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--text-sm);
+      margin-bottom: var(--sp-4);
+      min-height: 1.5em;
+    }
+    .quality-list {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--sp-3);
+      background: var(--panel-strong);
+      padding: var(--sp-4);
+      border: 1px solid var(--border);
+      margin-bottom: var(--sp-5);
+    }
+    .quality-item {
+      text-align: center;
+    }
+    .quality-label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .quality-val {
+      font-weight: 700;
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--text-sm);
+    }
+    .preview-canvas-wrap {
+      width: 112px;
+      height: 112px;
+      border: 1px solid var(--border);
+      background: #000;
+      margin: 0 auto var(--sp-4) auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .preview-canvas-wrap canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Đăng ký sinh trắc học</div>
+          <h1>Đăng ký khuôn mặt</h1>
+          <p class="text-muted">Đăng ký dữ liệu khuôn mặt của bạn để tra cứu thông tin chuyến bay nhanh bằng camera tại sân bay.</p>
+        </div>
+
+        <div style="max-width: 600px; margin: 0 auto;">
+          <!-- Step 1: Input Booking (if missing) -->
+          <div class="panel" id="lookupPanel" style="display:none;">
+            <div class="panel__header">
+              <h2>Nhập thông tin vé máy bay</h2>
+            </div>
+            <div class="panel__body">
+              <form id="lookupForm" novalidate>
+                <div style="display:grid; gap:var(--sp-4); margin-bottom:var(--sp-5);">
+                  <div class="field">
+                    <label class="label" for="bookingCode">Mã đặt chỗ (Booking Code) <span style="color:var(--danger)">*</span></label>
+                    <input id="bookingCode" type="text" class="input mono font-bold"
+                      placeholder="VD: A1B2C3D4" style="text-transform: uppercase;" required />
+                  </div>
+                </div>
+                <div id="lookupError" class="alert alert--error" style="display:none; margin-bottom:var(--sp-4);"></div>
+                <button type="submit" class="btn btn--primary btn--full btn--lg">Xác nhận vé</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Step 2: Camera Capture -->
+          <div class="panel" id="capturePanel" style="display:none;">
+            <div class="panel__header" style="justify-content:space-between;">
+              <div>
+                <h2>Chụp ảnh khuôn mặt</h2>
+                <p id="passengerSummary">Hành khách: —</p>
+              </div>
+              <span class="badge badge--signal" id="flightSummary">—</span>
+            </div>
+            <div class="panel__body">
+              <div class="camera-container" id="cameraContainer">
+                <video id="cameraVideo" class="camera-video" autoplay playsinline muted></video>
+                <div class="camera-overlay">
+                  <div class="camera-guide-box"></div>
+                </div>
+              </div>
+
+              <div class="status-text text-signal" id="cameraStatus">Đang tải mô hình trí tuệ nhân tạo...</div>
+
+              <div class="preview-canvas-wrap" id="previewCanvasWrap" style="display:none;">
+                <canvas id="facePreviewCanvas" width="112" height="112"></canvas>
+              </div>
+
+              <div class="quality-list" id="qualityList" style="display:none;">
+                <div class="quality-item">
+                  <div class="quality-label">Độ sáng</div>
+                  <div class="quality-val" id="qualityBrightness">—</div>
+                </div>
+                <div class="quality-item">
+                  <div class="quality-label">Góc xoay</div>
+                  <div class="quality-val" id="qualityPose">—</div>
+                </div>
+                <div class="quality-item">
+                  <div class="quality-label">Độ khớp AI</div>
+                  <div class="quality-val" id="qualityScore">—</div>
+                </div>
+              </div>
+
+              <div id="registerError" class="alert alert--error" style="display:none; margin-bottom:var(--sp-4);"></div>
+
+              <div style="display:flex; gap:var(--sp-3); justify-content:center;">
+                <button id="startCameraBtn" class="btn btn--ghost btn--lg">📷 Bật Camera</button>
+                <button id="captureBtn" class="btn btn--primary btn--lg" disabled>📸 Chụp & Đăng ký</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Success Screen -->
+          <div class="panel" id="successPanel" style="display:none;">
+            <div class="panel__body" style="text-align:center; padding:var(--sp-8) var(--sp-6);">
+              <div style="font-size:4.5rem; color:var(--ok); margin-bottom:var(--sp-4);">✓</div>
+              <h2 style="color:var(--ok); font-weight:700;">Đăng ký khuôn mặt thành công!</h2>
+              <p class="text-muted" style="margin-top:var(--sp-2); margin-bottom:var(--sp-6); max-width:400px; margin-left:auto; margin-right:auto;">
+                Dữ liệu sinh trắc học đã được mã hóa AES-GCM-256 an toàn và lưu vào Vector DB. Bạn có thể sử dụng camera nhận diện tại sân bay để xem thông tin chuyến bay ngay lập tức.
+              </p>
+              <div style="display:flex; gap:var(--sp-3); justify-content:center;">
+                <a href="/" class="btn btn--primary btn--lg">Trở về trang chủ</a>
+                <a href="/kiosk" class="btn btn--accent btn--lg">Trải nghiệm Kiosk</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetBooking, apiFaceRegister } from "../js/api.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearStaleFlow } from "../js/storage.js";
+    import { FaceCapture } from "../js/components/face-capture.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const urlParams = new URLSearchParams(location.search);
+    const bookingCode = urlParams.get("booking");
+
+    let currentBooking = null;
+    let faceCaptureInstance = null;
+
+    const lookupPanel = document.getElementById("lookupPanel");
+    const capturePanel = document.getElementById("capturePanel");
+    const successPanel = document.getElementById("successPanel");
+
+    // Initialize Page Flow
+    if (bookingCode) {
+      verifyBooking(bookingCode);
+    } else {
+      lookupPanel.style.display = "block";
+    }
+
+    // Lookup form submit
+    document.getElementById("lookupForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = document.getElementById("bookingCode").value.trim().toUpperCase();
+      if (code) {
+        verifyBooking(code);
+      }
+    });
+
+    async function verifyBooking(code) {
+      const errorEl = document.getElementById("lookupError");
+      errorEl.style.display = "none";
+      try {
+        currentBooking = await apiGetBooking(code);
+        
+        if (currentBooking.payment_status !== "paid") {
+          throw new Error("Vé chưa thanh toán. Vui lòng thanh toán trước khi đăng ký nhận diện khuôn mặt.");
+        }
+
+        // Fill passenger and flight info
+        document.getElementById("passengerSummary").textContent = `Hành khách: ${currentBooking.passenger_name || currentBooking.user_name}`;
+        document.getElementById("flightSummary").textContent = currentBooking.flight_number || "—";
+        
+        lookupPanel.style.display = "none";
+        capturePanel.style.display = "block";
+        initCameraCapture();
+      } catch (err) {
+        errorEl.textContent = err.message || "Không thể tải vé. Vui lòng kiểm tra mã đặt chỗ.";
+        errorEl.style.display = "block";
+        lookupPanel.style.display = "block";
+      }
+    }
+
+    function initCameraCapture() {
+      const cameraStatus = document.getElementById("cameraStatus");
+      
+      faceCaptureInstance = new FaceCapture({
+        onStatus: (msg) => {
+          cameraStatus.textContent = msg;
+          if (msg === "Models loaded.") {
+            cameraStatus.style.color = "var(--ok)";
+            document.getElementById("captureBtn").disabled = false;
+          }
+        }
+      });
+
+      // Load AI models immediately in background
+      faceCaptureInstance.init().catch(err => {
+        cameraStatus.textContent = "Lỗi khi tải mô hình AI: " + err.message;
+        cameraStatus.style.color = "var(--danger)";
+      });
+    }
+
+    const startCameraBtn = document.getElementById("startCameraBtn");
+    const captureBtn = document.getElementById("captureBtn");
+    const cameraVideo = document.getElementById("cameraVideo");
+    const cameraContainer = document.getElementById("cameraContainer");
+
+    startCameraBtn.addEventListener("click", async () => {
+      startCameraBtn.disabled = true;
+      try {
+        await faceCaptureInstance.startCamera(cameraVideo);
+        cameraContainer.classList.add("is-active");
+        startCameraBtn.textContent = "🎥 Camera đang chạy";
+        if (faceCaptureInstance.isInitialized()) {
+          captureBtn.disabled = false;
+        }
+      } catch (err) {
+        startCameraBtn.disabled = false;
+        alert("Lỗi camera: " + err.message);
+      }
+    });
+
+    captureBtn.addEventListener("click", async () => {
+      if (!faceCaptureInstance) return;
+      
+      captureBtn.disabled = true;
+      startCameraBtn.disabled = true;
+      const cameraStatus = document.getElementById("cameraStatus");
+      const regError = document.getElementById("registerError");
+      regError.style.display = "none";
+
+      cameraStatus.textContent = "⌛ Đang bắt đầu chụp loạt ảnh...";
+      cameraStatus.style.color = "var(--signal)";
+
+      try {
+        // Multi-frame burst capture (12 frames, selects 7 best and averages them)
+        const burstResult = await faceCaptureInstance.captureBurst(cameraVideo);
+        
+        cameraStatus.textContent = "✓ Trích xuất đặc trưng thành công! Đang lưu...";
+        cameraStatus.style.color = "var(--ok)";
+
+        // Display preview canvas and quality stats
+        const previewCanvasWrap = document.getElementById("previewCanvasWrap");
+        const previewCanvas = document.getElementById("facePreviewCanvas");
+        const qualityList = document.getElementById("qualityList");
+        
+        // Temporarily render last aligned face to preview canvas
+        const lastEmbedding = faceCaptureInstance.getLastEmbedding();
+        if (lastEmbedding) {
+          previewCanvasWrap.style.display = "block";
+          qualityList.style.display = "grid";
+          
+          document.getElementById("qualityBrightness").textContent = "Đạt";
+          document.getElementById("qualityBrightness").style.color = "var(--ok)";
+          document.getElementById("qualityPose").textContent = "Nhìn thẳng";
+          document.getElementById("qualityPose").style.color = "var(--ok)";
+          document.getElementById("qualityScore").textContent = (burstResult.quality * 100).toFixed(0) + "%";
+          document.getElementById("qualityScore").style.color = "var(--ok)";
+        }
+
+        cameraContainer.classList.remove("is-active");
+        cameraContainer.classList.add("is-done");
+
+        // Encrypt the 128D average vector using AES-GCM-256
+        const encrypted = await faceCaptureInstance.encryptEmbedding(burstResult.embedding);
+
+        // Submit register request to FastAPI backend
+        const registerResponse = await apiFaceRegister({
+          booking_id: currentBooking.id,
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv
+        });
+
+        // Success state
+        faceCaptureInstance.stopCamera();
+        setTimeout(() => {
+          capturePanel.style.display = "none";
+          successPanel.style.display = "block";
+        }, 1200);
+
+      } catch (err) {
+        regError.textContent = "Lỗi đăng ký: " + err.message;
+        regError.style.display = "block";
+        cameraStatus.textContent = "❌ Thử lại: Hãy căn chỉnh mặt thẳng và đủ sáng.";
+        cameraStatus.style.color = "var(--danger)";
+        captureBtn.disabled = false;
+        startCameraBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

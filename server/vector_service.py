@@ -51,15 +51,18 @@ def upsert_face_embedding(point_id: str, vector: list[float], payload: dict[str,
     )
 
 
-def search_face_embedding(vector: list[float], flight_id: int, limit: int = 1) -> list[Any]:
+def search_face_embedding(vector: list[float], flight_id: int | None = None, limit: int = 1) -> list[Any]:
     ensure_face_collection()
     client = get_qdrant_client()
+    query_filter = None
+    if flight_id is not None:
+        query_filter = models.Filter(
+            must=[models.FieldCondition(key="flight_id", match=models.MatchValue(value=flight_id))]
+        )
     result = client.query_points(
         collection_name=COLLECTION_NAME,
         query=validate_embedding(vector),
-        query_filter=models.Filter(
-            must=[models.FieldCondition(key="flight_id", match=models.MatchValue(value=flight_id))]
-        ),
+        query_filter=query_filter,
         limit=limit,
         with_payload=True,
     )

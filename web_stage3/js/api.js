@@ -1,0 +1,258 @@
+/**
+ * api.js — Centralized API client with JWT auth headers.
+ */
+const API_BASE = (() => {
+  // Allow override, otherwise call the same FastAPI origin that serves the web.
+  return window.__API_BASE__ || window.location.origin;
+})();
+
+// ---------------------------------------------------------------------------
+// Low-level fetch
+// ---------------------------------------------------------------------------
+
+async function apiRequest(path, options = {}) {
+  const token = window._authToken;
+  const headers = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (err) {
+    throw new Error(`Network error: ${err.message}`);
+  }
+
+  const text = await response.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* noop */ }
+
+  if (!response.ok) {
+    const msg = data?.detail || data?.message || `HTTP ${response.status}`;
+    const err = new Error(msg);
+    err.status = response.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+async function apiRegister(payload) {
+  return apiRequest("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function apiLogin(email, password) {
+  return apiRequest("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+async function apiGetMe() {
+  return apiRequest("/api/auth/me");
+}
+
+async function apiUpdateMe(payload) {
+  return apiRequest("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Airports
+// ---------------------------------------------------------------------------
+
+async function apiGetAirports() {
+  return apiRequest("/api/airports");
+}
+
+// ---------------------------------------------------------------------------
+// Flights
+// ---------------------------------------------------------------------------
+
+async function apiSearchFlights({ origin, destination, date, passengers = 1 } = {}) {
+  const params = new URLSearchParams();
+  if (origin)      params.set("origin", origin);
+  if (destination) params.set("destination", destination);
+  if (date)        params.set("flight_date", date);
+  if (passengers)  params.set("passengers", String(passengers));
+  const qs = params.toString();
+  return apiRequest(`/api/flights/search${qs ? "?" + qs : ""}`);
+}
+
+async function apiGetFlight(id) {
+  return apiRequest(`/api/flights/${id}`);
+}
+
+async function apiGetFlightSeats(id) {
+  return apiRequest(`/api/flights/${id}/seats`);
+}
+
+// ---------------------------------------------------------------------------
+// Bookings
+// ---------------------------------------------------------------------------
+
+async function apiCreateBooking(payload) {
+  return apiRequest("/api/bookings", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function apiGetMyBookings() {
+  return apiRequest("/api/bookings");
+}
+
+async function apiGetBooking(code) {
+  return apiRequest(`/api/bookings/code/${code}`);
+}
+
+async function apiCancelBooking(id) {
+  return apiRequest(`/api/bookings/${id}/cancel`, { method: "PATCH" });
+}
+
+async function apiChangeSeat(bookingId, newSeatNumber) {
+  return apiRequest(`/api/bookings/${bookingId}/change-seat`, {
+    method: "POST",
+    body: JSON.stringify({ new_seat_number: newSeatNumber }),
+  });
+}
+
+async function apiCheckin(bookingId) {
+  return apiRequest(`/api/bookings/${bookingId}/checkin`, { method: "PATCH" });
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+async function apiInitPayment(bookingId, method) {
+  return apiRequest("/api/payments/init", {
+    method: "POST",
+    body: JSON.stringify({ booking_id: bookingId, method }),
+  });
+}
+
+async function apiPaymentCallback(txId, status) {
+  return apiRequest(`/api/payments/callback?tx_id=${txId}&status=${status}`, {
+    method: "POST",
+  });
+}
+
+async function apiPaymentStatus(bookingId) {
+  return apiRequest(`/api/payments/${bookingId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Face (proto endpoints)
+// ---------------------------------------------------------------------------
+
+async function apiFaceRegister(payload) {
+  return apiRequest("/api/face/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function apiFaceMatch(flightId, embedding, threshold = 0.045) {
+  return apiRequest("/api/face/match", {
+    method: "POST",
+    body: JSON.stringify({ flight_id: flightId, embedding, threshold }),
+  });
+}
+
+async function apiSyncFlight(flightId) {
+  return apiRequest(`/api/sync/${flightId}`);
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+async function apiHealth() {
+  return apiRequest("/health");
+}
+
+async function apiVectorHealth() {
+  return apiRequest("/health/vector", { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format VND currency.
+ */
+function formatVND(amount) {
+  if (amount == null) return "—";
+  return new Intl.NumberFormat("vi-VN").format(Math.round(amount)) + " ₫";
+}
+
+/**
+ * Format date for display.
+ */
+function formatDate(dateStr) {
+  if (!dateStr) return "—";
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "short", year: "numeric" });
+  } catch { return dateStr; }
+}
+
+/**
+ * Format time string HH:MM:SS → HH:MM
+ */
+function formatTime(timeStr) {
+  if (!timeStr) return "—";
+  return String(timeStr).substring(0, 5);
+}
+
+/**
+ * Format datetime ISO → HH:MM on date
+ */
+function formatDateTime(dt) {
+  if (!dt) return "—";
+  return formatDate(dt) + " · " + formatTime(dt);
+}
+
+export {
+  apiRequest,
+  apiRegister,
+  apiLogin,
+  apiGetMe,
+  apiUpdateMe,
+  apiGetAirports,
+  apiSearchFlights,
+  apiGetFlight,
+  apiGetFlightSeats,
+  apiCreateBooking,
+  apiGetMyBookings,
+  apiGetBooking,
+  apiCancelBooking,
+  apiChangeSeat,
+  apiCheckin,
+  apiInitPayment,
+  apiPaymentCallback,
+  apiPaymentStatus,
+  apiFaceRegister,
+  apiFaceMatch,
+  apiSyncFlight,
+  apiHealth,
+  apiVectorHealth,
+  formatVND,
+  formatDate,
+  formatTime,
+  formatDateTime,
+};

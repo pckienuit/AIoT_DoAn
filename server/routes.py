@@ -1,187 +1,713 @@
-from typing import Any
+"""Core API routes: auth, airports, flights, bookings, payments."""
+from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import secrets
+from datetime import date, datetime, timedelta
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from server.database import get_connection
+from server.auth import create_access_token, get_current_user, get_optional_user, hash_password, verify_password
+from server.database import get_connection, row_to_dict
 
-router = APIRouter(prefix="/api", tags=["prototype"])
+
+router = APIRouter(prefix="/api", tags=["core"])
 
 
-class PassengerCreate(BaseModel):
-    name: str = Field(min_length=1)
-    email: str = Field(min_length=3)
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+class UserRegister(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    password: str = Field(min_length=6, max_length=128)
+    full_name: str = Field(min_length=1, max_length=255)
     phone: str | None = None
+    date_of_birth: str | None = None  # YYYY-MM-DD
+    id_card: str | None = None
 
 
-class FlightCreate(BaseModel):
-    flight_code: str = Field(min_length=1)
-    destination: str = Field(min_length=1)
-    departure_time: str = Field(min_length=1)
-    boarding_time: str | None = None
-    gate: str | None = None
-    status: str = "scheduled"
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    phone: str | None = None
+    date_of_birth: str | None = None
+    id_card: str | None = None
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: dict[str, Any]
 
 
 class BookingCreate(BaseModel):
-    booking_code: str = Field(min_length=1)
-    passenger_id: int
     flight_id: int
+    passenger_id: int | None = None
+    passenger_name: str = Field(min_length=1, max_length=255)
+    passenger_email: str | None = None
+    passenger_phone: str | None = None
     seat_number: str | None = None
-    status: str = "booked"
+    total_price: float | None = None
 
 
-def row_to_dict(row: Any) -> dict[str, Any]:
-    return dict(row)
+class SeatChangeRequest(BaseModel):
+    new_seat_number: str = Field(min_length=1, max_length=4)
 
 
-def fetch_one_or_404(query: str, params: tuple[Any, ...], name: str) -> dict[str, Any]:
+class PaymentInit(BaseModel):
+    booking_id: int
+    method: str = Field(pattern="^(vnpay|momo|cash)$")
+
+
+class FaceRegisterPayload(BaseModel):
+    booking_id: int
+    ciphertext: str | None = None
+    iv: str | None = None
+    embedding: list[float] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_one(query: str, params: tuple[Any, ...]) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(query, params).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"{name} not found")
-    return row_to_dict(row)
+    if row:
+        return row_to_dict(row)
+    return None
 
 
-@router.post("/passengers", status_code=201)
-def create_passenger(payload: PassengerCreate) -> dict[str, Any]:
-    try:
-        with get_connection() as conn:
-            cursor = conn.execute(
-                "INSERT INTO passengers (name, email, phone) VALUES (?, ?, ?)",
-                (payload.name, payload.email, payload.phone),
-            )
-            passenger_id = cursor.lastrowid
-    except Exception as exc:
-        raise HTTPException(status_code=409, detail="Passenger email already exists") from exc
-
-    return get_passenger(passenger_id)
-
-
-@router.get("/passengers")
-def list_passengers() -> list[dict[str, Any]]:
+def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute("SELECT * FROM passengers ORDER BY id DESC").fetchall()
-    return [row_to_dict(row) for row in rows]
+        rows = conn.execute(query, params).fetchall()
+    return [row_to_dict(r) for r in rows]
 
 
-@router.get("/passengers/{passenger_id}")
-def get_passenger(passenger_id: int) -> dict[str, Any]:
-    return fetch_one_or_404(
-        "SELECT * FROM passengers WHERE id = ?",
-        (passenger_id,),
-        "Passenger",
-    )
+def _execute(query: str, params: tuple[Any, ...]) -> int:
+    """Execute a write query and return rows affected."""
+    with get_connection() as conn:
+        cur = conn.execute(query, params)
+        conn.commit()
+        return cur.rowcount
 
 
-@router.post("/flights", status_code=201)
-def create_flight(payload: FlightCreate) -> dict[str, Any]:
-    try:
-        with get_connection() as conn:
-            cursor = conn.execute(
+def _generate_booking_code() -> str:
+    return secrets.token_hex(4).upper()
+
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+
+auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+@auth_router.post("/register", status_code=201)
+def register(payload: UserRegister) -> dict[str, Any]:
+    hp = hash_password(payload.password)
+    with get_connection() as conn:
+        try:
+            cur = conn.execute(
                 """
-                INSERT INTO flights (flight_code, destination, departure_time, boarding_time, gate, status)
+                INSERT INTO users (email, password_hash, full_name, phone, date_of_birth, id_card)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    payload.flight_code,
-                    payload.destination,
-                    payload.departure_time,
-                    payload.boarding_time,
-                    payload.gate,
-                    payload.status,
-                ),
+                (payload.email, hp, payload.full_name, payload.phone,
+                 payload.date_of_birth, payload.id_card),
             )
-            flight_id = cursor.lastrowid
-    except Exception as exc:
-        raise HTTPException(status_code=409, detail="Flight code already exists") from exc
+            user_id = cur.lastrowid
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="Email already registered") from exc
 
-    return get_flight(flight_id)
+    user = _fetch_one("SELECT id, email, full_name, phone, date_of_birth, id_card, created_at FROM users WHERE id = ?", (user_id,))
+    token = create_access_token({"sub": str(user["id"]), "email": user["email"]})
+    return {"access_token": token, "token_type": "bearer", "user": user}
 
 
-@router.get("/flights")
-def list_flights() -> list[dict[str, Any]]:
-    with get_connection() as conn:
-        rows = conn.execute("SELECT * FROM flights ORDER BY departure_time ASC").fetchall()
-    return [row_to_dict(row) for row in rows]
+@auth_router.post("/login")
+def login(payload: UserLogin) -> TokenResponse:
+    user = _fetch_one("SELECT * FROM users WHERE email = ?", (payload.email,))
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token({"sub": str(user["id"]), "email": user["email"]})
+    safe_user = {k: v for k, v in user.items() if k != "password_hash"}
+    return TokenResponse(access_token=token, user=safe_user)
+
+
+@auth_router.get("/me")
+def get_me(user: Annotated[dict, Depends(get_current_user)]) -> dict[str, Any]:
+    uid = user["sub"]
+    u = _fetch_one(
+        "SELECT id, email, full_name, phone, date_of_birth, id_card, created_at FROM users WHERE id = ?",
+        (int(uid),),
+    )
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return u
+
+
+@auth_router.patch("/me")
+def update_me(payload: UserUpdate, user: Annotated[dict, Depends(get_current_user)]) -> dict[str, Any]:
+    fields, values = [], []
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is not None:
+            fields.append(f"{field} = ?")
+            values.append(value)
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    values.append(int(user["sub"]))
+    _execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", tuple(values))
+    return get_me(user)
+
+
+# ---------------------------------------------------------------------------
+# Airports
+# ---------------------------------------------------------------------------
+
+@router.get("/airports")
+def list_airports() -> list[dict[str, Any]]:
+    return _fetch_all("SELECT * FROM airports ORDER BY city ASC")
+
+
+# ---------------------------------------------------------------------------
+# Flights
+# ---------------------------------------------------------------------------
+
+@router.get("/flights/search")
+def search_flights(
+    origin: Annotated[str | None, Query(description="Airport code e.g. HAN")] = None,
+    destination: Annotated[str | None, Query(description="Airport code e.g. SGN")] = None,
+    flight_date: Annotated[str | None, Query(description="YYYY-MM-DD")] = None,
+    passengers: Annotated[int, Query(ge=1, le=9)] = 1,
+) -> list[dict[str, Any]]:
+    q = """
+        SELECT
+            fl.id,
+            fl.flight_number,
+            fl.flight_date,
+            fl.status,
+            fl.available_seats,
+            fl.price_multiplier,
+            s.departure_time,
+            s.arrival_time,
+            s.base_price,
+            r.distance_km,
+            a_o.code    AS origin_code,
+            a_o.name    AS origin_name,
+            a_o.city    AS origin_city,
+            a_d.code    AS dest_code,
+            a_d.name    AS dest_name,
+            a_d.city    AS dest_city,
+            p.plane_type,
+            p.total_seats,
+            p.seat_layout
+        FROM flights fl
+        JOIN schedules s   ON s.id = fl.schedule_id
+        JOIN routes   r   ON r.id = s.route_id
+        JOIN airports a_o ON a_o.id = r.origin_id
+        JOIN airports a_d ON a_d.id = r.destination_id
+        JOIN planes   p   ON p.id = s.plane_id
+        WHERE fl.status IN ('scheduled', 'boarding')
+          AND fl.available_seats >= ?
+    """
+    params: list[Any] = [passengers]
+
+    if origin:
+        q += " AND a_o.code = ?"
+        params.append(origin.upper())
+    if destination:
+        q += " AND a_d.code = ?"
+        params.append(destination.upper())
+    if flight_date:
+        q += " AND fl.flight_date = ?"
+        params.append(flight_date)
+
+    q += " ORDER BY s.departure_time ASC"
+
+    rows = _fetch_all(q, tuple(params))
+    for row in rows:
+        # Calculate flight duration
+        if row.get("departure_time") and row.get("arrival_time"):
+            try:
+                dep = row["departure_time"]
+                arr = row["arrival_time"]
+                if isinstance(dep, str):
+                    dep = datetime.strptime(str(dep), "%H:%M:%S")
+                    arr = datetime.strptime(str(arr), "%H:%M:%S")
+                diff = arr - dep
+                if diff.total_seconds() < 0:
+                    diff += timedelta(hours=24)
+                hours, remainder = divmod(int(diff.total_seconds()), 3600)
+                minutes = remainder // 60
+                row["duration_minutes"] = hours * 60 + minutes
+            except Exception:
+                row["duration_minutes"] = 0
+        # Calculate price
+        base = float(row.get("base_price") or 0)
+        mult = float(row.get("price_multiplier") or 1.0)
+        row["price_per_person"] = round(base * mult, 0)
+        row["total_price"] = round(base * mult * passengers, 0)
+    return rows
 
 
 @router.get("/flights/{flight_id}")
 def get_flight(flight_id: int) -> dict[str, Any]:
-    return fetch_one_or_404(
-        "SELECT * FROM flights WHERE id = ?",
+    row = _fetch_one(
+        """
+        SELECT
+            fl.*,
+            s.departure_time, s.arrival_time, s.base_price,
+            r.distance_km,
+            a_o.code AS origin_code, a_o.name AS origin_name, a_o.city AS origin_city,
+            a_d.code AS dest_code, a_d.name AS dest_name, a_d.city AS dest_city,
+            p.plane_type, p.total_seats, p.seat_layout
+        FROM flights fl
+        JOIN schedules s ON s.id = fl.schedule_id
+        JOIN routes r ON r.id = s.route_id
+        JOIN airports a_o ON a_o.id = r.origin_id
+        JOIN airports a_d ON a_d.id = r.destination_id
+        JOIN planes p ON p.id = s.plane_id
+        WHERE fl.id = ?
+        """,
         (flight_id,),
-        "Flight",
     )
+    if not row:
+        raise HTTPException(status_code=404, detail="Flight not found")
+    return row
 
+
+@router.get("/flights/{flight_id}/seats")
+def get_flight_seats(flight_id: int) -> dict[str, Any]:
+    flight = get_flight(flight_id)
+    layout_raw = flight.get("seat_layout")
+    if isinstance(layout_raw, str):
+        import json
+        layout = json.loads(layout_raw)
+    elif isinstance(layout_raw, dict):
+        layout = layout_raw
+    else:
+        layout = {"rows": 30, "cols": 6, "aisle": 2, "extra_legroom_cols": [1, 6]}
+
+    booked = _fetch_all(
+        "SELECT seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'",
+        (flight_id,),
+    )
+    booked_seats = {
+        seat.strip()
+        for row in booked
+        for seat in str(row["seat_number"]).split(",")
+        if seat.strip()
+    }
+
+    rows_count = layout.get("rows", 30)
+    cols_count = layout.get("cols", 6)
+    aisle_at = layout.get("aisle", 2)
+    extra_cols = set(layout.get("extra_legroom_cols", [1, 6]))
+
+    seats = []
+    for r in range(1, rows_count + 1):
+        row_label = str(r)
+        for c in range(1, cols_count + 1):
+            seat_label = f"{row_label}{chr(64 + c)}"
+            status = "booked" if seat_label in booked_seats else "available"
+            extra = c in extra_cols
+            surcharge = 150000 if extra else 0
+            seats.append({
+                "seat": seat_label,
+                "row": r,
+                "col": c,
+                "status": status,
+                "extra_legroom": extra,
+                "surcharge": surcharge,
+            })
+
+    return {
+        "flight_id": flight_id,
+        "flight_number": flight["flight_number"],
+        "layout": layout,
+        "seats": seats,
+        "booked_count": len(booked_seats),
+        "available_count": len(seats) - len(booked_seats),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bookings
+# ---------------------------------------------------------------------------
 
 @router.post("/bookings", status_code=201)
-def create_booking(payload: BookingCreate) -> dict[str, Any]:
-    try:
-        with get_connection() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO bookings (booking_code, passenger_id, flight_id, seat_number, status)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    payload.booking_code,
-                    payload.passenger_id,
-                    payload.flight_id,
-                    payload.seat_number,
-                    payload.status,
-                ),
-            )
-            booking_id = cursor.lastrowid
-    except Exception as exc:
-        raise HTTPException(status_code=409, detail="Booking cannot be created") from exc
+def create_booking(
+    payload: BookingCreate,
+    user: Annotated[dict | None, Depends(get_optional_user)] = None,
+) -> dict[str, Any]:
+    flight = get_flight(payload.flight_id)
+    requested_seats = [
+        seat.strip().upper()
+        for seat in str(payload.seat_number or "").split(",")
+        if seat.strip()
+    ]
+    seats_count = max(1, len(requested_seats))
 
-    return get_booking(booking_id)
+    if flight["available_seats"] < seats_count:
+        raise HTTPException(status_code=409, detail="No seats available on this flight")
 
+    code = _generate_booking_code()
+    uid = int(user["sub"]) if user else None
+    total = payload.total_price or flight.get("price_per_person", 0)
 
-@router.get("/bookings")
-def list_bookings() -> list[dict[str, Any]]:
     with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                b.*,
-                p.name AS passenger_name,
-                p.email AS passenger_email,
-                f.flight_code,
-                f.destination,
-                f.gate,
-                f.departure_time,
-                f.boarding_time,
-                f.status AS flight_status
-            FROM bookings b
-            JOIN passengers p ON p.id = b.passenger_id
-            JOIN flights f ON f.id = b.flight_id
-            ORDER BY b.id DESC
-            """
-        ).fetchall()
-    return [row_to_dict(row) for row in rows]
+        # If guest booking, map to user account if email and phone matches
+        if not uid and payload.passenger_email and payload.passenger_phone:
+            existing_user = conn.execute(
+                "SELECT id FROM users WHERE email = ? AND phone = ?",
+                (payload.passenger_email.strip().lower(), payload.passenger_phone.strip()),
+            ).fetchone()
+            if existing_user:
+                uid = existing_user["id"]
+
+        if requested_seats:
+            existing = conn.execute(
+                """
+                SELECT seat_number FROM bookings
+                WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'
+                """,
+                (payload.flight_id,),
+            ).fetchall()
+            taken = {
+                seat.strip().upper()
+                for row in existing
+                for seat in str(row["seat_number"]).split(",")
+                if seat.strip()
+            }
+            conflict = sorted(taken.intersection(requested_seats))
+            if conflict:
+                raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
+
+        # Resolve passenger_id: use provided or create from name/email/phone
+        passenger_id = payload.passenger_id
+        if not passenger_id:
+            # Check if matching passenger exists
+            existing = conn.execute(
+                "SELECT id FROM passengers WHERE email = ?",
+                (payload.passenger_email or "",),
+            ).fetchone()
+            if existing:
+                passenger_id = existing["id"]
+            else:
+                # Create new passenger record
+                cur = conn.execute(
+                    "INSERT INTO passengers (name, email, phone) VALUES (?, ?, ?)",
+                    (payload.passenger_name, payload.passenger_email or "", payload.passenger_phone or ""),
+                )
+                passenger_id = cur.lastrowid
+
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO bookings
+                (booking_code, user_id, flight_id, passenger_id, seat_number,
+                 passenger_name, passenger_email, passenger_phone,
+                 total_price, status, payment_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'unpaid')
+                """,
+                (code, uid, payload.flight_id, passenger_id,
+                 payload.seat_number,
+                 payload.passenger_name, payload.passenger_email,
+                 payload.passenger_phone, total),
+            )
+            booking_id = cur.lastrowid
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="Booking failed") from exc
+
+        # Decrease available seats
+        conn.execute(
+            "UPDATE flights SET available_seats = available_seats - ? WHERE id = ?",
+            (seats_count, payload.flight_id),
+        )
+        conn.commit()
+
+    return _get_booking_detail(booking_id)
 
 
-@router.get("/bookings/{booking_id}")
-def get_booking(booking_id: int) -> dict[str, Any]:
-    return fetch_one_or_404(
+def _get_booking_detail(booking_id: int) -> dict[str, Any]:
+    return _fetch_one(
         """
         SELECT
             b.*,
-            p.name AS passenger_name,
-            p.email AS passenger_email,
-            f.flight_code,
-            f.destination,
-            f.gate,
-            f.departure_time,
-            f.boarding_time,
-            f.status AS flight_status
+            fl.flight_number, fl.flight_date, fl.status AS flight_status,
+            s.departure_time, s.arrival_time,
+            a_o.code AS origin_code, a_o.city AS origin_city,
+            a_d.code AS dest_code, a_d.city AS dest_city,
+            u.full_name AS user_name, u.email AS user_email
         FROM bookings b
-        JOIN passengers p ON p.id = b.passenger_id
-        JOIN flights f ON f.id = b.flight_id
+        JOIN flights fl ON fl.id = b.flight_id
+        JOIN schedules s ON s.id = fl.schedule_id
+        JOIN routes r ON r.id = s.route_id
+        JOIN airports a_o ON a_o.id = r.origin_id
+        JOIN airports a_d ON a_d.id = r.destination_id
+        LEFT JOIN users u ON u.id = b.user_id
         WHERE b.id = ?
         """,
         (booking_id,),
-        "Booking",
     )
+
+
+def get_booking(booking_id: int) -> dict[str, Any]:
+    """Public alias for face_routes.py — raises 404 if not found."""
+    row = _get_booking_detail(booking_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return row
+
+
+@router.get("/bookings")
+def list_bookings(user: Annotated[dict, Depends(get_current_user)]) -> list[dict[str, Any]]:
+    rows = _fetch_all(
+        """
+        SELECT
+            b.*,
+            fl.flight_number, fl.flight_date, fl.status AS flight_status,
+            s.departure_time,
+            a_o.code AS origin_code, a_o.city AS origin_city,
+            a_d.code AS dest_code, a_d.city AS dest_city
+        FROM bookings b
+        JOIN flights fl ON fl.id = b.flight_id
+        JOIN schedules s ON s.id = fl.schedule_id
+        JOIN routes r ON r.id = s.route_id
+        JOIN airports a_o ON a_o.id = r.origin_id
+        JOIN airports a_d ON a_d.id = r.destination_id
+        WHERE b.user_id = ?
+        ORDER BY b.created_at DESC
+        """,
+        (int(user["sub"]),),
+    )
+    return rows
+
+
+@router.get("/bookings/code/{code}")
+def get_booking_by_code(code: str) -> dict[str, Any]:
+    row = _fetch_one(
+        """
+        SELECT
+            b.*,
+            fl.flight_number, fl.flight_date, fl.status AS flight_status,
+            s.departure_time, s.arrival_time,
+            a_o.code AS origin_code, a_o.city AS origin_city,
+            a_d.code AS dest_code, a_d.city AS dest_city,
+            u.full_name AS user_name, u.email AS user_email
+        FROM bookings b
+        JOIN flights fl ON fl.id = b.flight_id
+        JOIN schedules s ON s.id = fl.schedule_id
+        JOIN routes r ON r.id = s.route_id
+        JOIN airports a_o ON a_o.id = r.origin_id
+        JOIN airports a_d ON a_d.id = r.destination_id
+        LEFT JOIN users u ON u.id = b.user_id
+        WHERE b.booking_code = ?
+        """,
+        (code.upper(),),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return row
+
+
+@router.patch("/bookings/{booking_id}/cancel")
+def cancel_booking(
+    booking_id: int,
+    user: Annotated[dict, Depends(get_current_user)],
+) -> dict[str, Any]:
+    row = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if row.get("user_id") != int(user["sub"]):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if row["status"] in ("cancelled", "refunded"):
+        raise HTTPException(status_code=409, detail="Booking already cancelled or refunded")
+    if row["status"] == "checked_in":
+        raise HTTPException(status_code=409, detail="Cannot cancel a checked-in booking")
+
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _execute(
+        "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?",
+        (now, booking_id),
+    )
+    _execute(
+        "UPDATE flights SET available_seats = available_seats + 1 WHERE id = ?",
+        (row["flight_id"],),
+    )
+    return _get_booking_detail(booking_id)
+
+
+@router.post("/bookings/{booking_id}/change-seat")
+def change_seat(
+    booking_id: int,
+    payload: SeatChangeRequest,
+) -> dict[str, Any]:
+    row = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if row["status"] in ("cancelled", "checked_in"):
+        raise HTTPException(status_code=409, detail="Cannot change seat in current booking state")
+
+    # Check seat is free
+    requested_seats = [s.strip().upper() for s in payload.new_seat_number.split(",") if s.strip()]
+    if not requested_seats:
+        raise HTTPException(status_code=422, detail="Invalid seat number")
+
+    existing = _fetch_all(
+        "SELECT id, seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND id != ? AND status != 'cancelled'",
+        (row["flight_id"], booking_id),
+    )
+    taken = {
+        seat.strip().upper()
+        for r in existing
+        for seat in str(r["seat_number"]).split(",")
+        if seat.strip()
+    }
+    conflict = sorted(taken.intersection(requested_seats))
+    if conflict:
+        raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
+
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _execute(
+        "UPDATE bookings SET seat_number = ?, updated_at = ? WHERE id = ?",
+        (payload.new_seat_number.upper(), now, booking_id),
+    )
+    return _get_booking_detail(booking_id)
+
+
+@router.patch("/bookings/{booking_id}/checkin")
+def checkin_booking(
+    booking_id: int,
+) -> dict[str, Any]:
+    row = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if row["status"] == "checked_in":
+        raise HTTPException(status_code=409, detail="Already checked in")
+    if row["status"] == "cancelled":
+        raise HTTPException(status_code=409, detail="Cannot check in a cancelled booking")
+    if row["payment_status"] != "paid":
+        raise HTTPException(status_code=409, detail="Payment not completed")
+
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _execute(
+        "UPDATE bookings SET status = 'checked_in', updated_at = ? WHERE id = ?",
+        (now, booking_id),
+    )
+    return _get_booking_detail(booking_id)
+
+
+# ---------------------------------------------------------------------------
+# Payments (mock VNPay/MoMo)
+# ---------------------------------------------------------------------------
+
+@router.post("/payments/init")
+def init_payment(
+    payload: PaymentInit,
+) -> dict[str, Any]:
+    booking = _fetch_one("SELECT * FROM bookings WHERE id = ?", (payload.booking_id,))
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking["payment_status"] == "paid":
+        raise HTTPException(status_code=409, detail="Already paid")
+
+    tx_id = f"{payload.method.upper()}-{secrets.token_hex(6)}"
+    with get_connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO payments (booking_id, amount, method, transaction_id) VALUES (?, ?, ?, ?)",
+            (booking["id"], booking["total_price"], payload.method, tx_id),
+        )
+        payment_id = cur.lastrowid
+        conn.commit()
+
+    if payload.method == "vnpay":
+        pay_url = f"https://vnpay.example.com/pay?tx={tx_id}&amount={booking['total_price']}"
+    elif payload.method == "momo":
+        pay_url = f"https://momo.example.com/qr?tx={tx_id}&amount={booking['total_price']}"
+    else:
+        pay_url = None
+
+    return {
+        "payment_id": payment_id,
+        "transaction_id": tx_id,
+        "amount": booking["total_price"],
+        "method": payload.method,
+        "payment_url": pay_url,
+        "status": "pending",
+    }
+
+
+@router.post("/payments/callback")
+def payment_callback(
+    tx_id: str = Query(...),
+    status: str = Query(...),
+) -> dict[str, Any]:
+    """
+    Mock callback from VNPay/MoMo.
+    status: success | failed
+    """
+    with get_connection() as conn:
+        payment = conn.execute(
+            "SELECT * FROM payments WHERE transaction_id = ?", (tx_id,)
+        ).fetchone()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    payment_id = payment["id"]
+    booking_id = payment["booking_id"]
+
+    with get_connection() as conn:
+        if status == "success":
+            conn.execute(
+                "UPDATE payments SET status = 'success' WHERE id = ?", (payment_id,)
+            )
+            conn.execute(
+                "UPDATE bookings SET payment_status = 'paid', updated_at = ? WHERE id = ?",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), booking_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE payments SET status = 'failed' WHERE id = ?", (payment_id,)
+            )
+        conn.commit()
+
+    return {"status": "ok", "booking_code": _fetch_one(
+        "SELECT booking_code FROM bookings WHERE id = ?", (booking_id,)
+    )["booking_code"]}
+
+
+@router.get("/payments/{booking_id}")
+def get_payment_status(
+    booking_id: int,
+) -> dict[str, Any]:
+    booking = _fetch_one("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    row = _fetch_one(
+        "SELECT * FROM payments WHERE booking_id = ? ORDER BY created_at DESC LIMIT 1",
+        (booking_id,),
+    )
+    if not row:
+        return {"booking_id": booking_id, "payment_status": booking["payment_status"], "payment": None}
+    return {"booking_id": booking_id, "payment_status": booking["payment_status"], "payment": row}
+
+
+# ---------------------------------------------------------------------------
+# Register router with FastAPI app
+# ---------------------------------------------------------------------------
+
+def register_routes(app):
+    app.include_router(auth_router)
+    app.include_router(router)

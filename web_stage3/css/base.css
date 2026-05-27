@@ -1,0 +1,173 @@
+/* ==========================================================================
+   BASE — CSS variables, reset, typography, keyframes
+   ========================================================================== */
+
+:root {
+  /* --- Color palette (dark industrial / airport terminal) --- */
+  --bg:             #090a07;
+  --panel:          #11130d;
+  --panel-strong:    #171a11;
+  --panel-raised:    #1e2016;
+  --ink:             #f5f1df;
+  --ink-2:           #c8c2a6;
+  --muted:           #a9a28b;
+  --line:            #393522;
+  --line-2:          #4d4a34;
+
+  /* --- Accents --- */
+  --signal:          #ff6b1a;
+  --signal-dim:      rgba(255, 107, 26, 0.15);
+  --signal-2:        #d6ff3f;
+  --signal-2-dim:    rgba(214, 255, 63, 0.1);
+  --ok:              #56f08a;
+  --ok-dim:         rgba(86, 240, 138, 0.12);
+  --danger:         #ff4f4f;
+  --danger-dim:     rgba(255, 79, 79, 0.12);
+  --warn:           #f5c518;
+  --warn-dim:       rgba(245, 197, 24, 0.12);
+
+  /* --- Semantic tokens --- */
+  --primary:         var(--signal);
+  --primary-dim:     var(--signal-dim);
+  --accent:          var(--signal-2);
+  --accent-dim:      var(--signal-2-dim);
+  --surface-1:       var(--panel);
+  --surface-2:       var(--panel-strong);
+  --border:          var(--line);
+
+  /* --- Seat status --- */
+  --seat-available:   #d6ff3f;
+  --seat-selected:    #ff6b1a;
+  --seat-booked:     #3a3a30;
+  --seat-extra:      #4a6fa5;
+
+  /* --- Typography scale --- */
+  --text-xs:   0.72rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-2xl:  1.5rem;
+  --text-3xl:  2rem;
+  --text-hero: clamp(2.45rem, 7vw, 6.4rem);
+
+  /* --- Spacing --- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* --- Radii (square — matching design language) --- */
+  --radius: 0;
+
+  /* --- Shadows --- */
+  --shadow:      0 28px 90px rgba(0, 0, 0, 0.42);
+  --shadow-sm:    0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-lg:    0 60px 160px rgba(0, 0, 0, 0.55);
+
+  /* --- Transitions --- */
+  --t-fast:  120ms ease;
+  --t-base:  180ms ease;
+  --t-slow:  280ms ease;
+
+  /* --- Layout --- */
+  --container: min(1440px, calc(100% - 32px));
+  --nav-height: 68px;
+}
+
+/* --- Reset --- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: "Instrument Sans", system-ui, sans-serif;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  background-color: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img, video, canvas { display: block; max-width: 100%; }
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; border: none; background: none; }
+ul, ol { list-style: none; }
+
+button, input { font: inherit; }
+
+/* --- Scrollbar --- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--panel); }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--signal); }
+
+/* --- Selection --- */
+::selection { background: var(--signal); color: #120900; }
+
+/* --- Focus --- */
+:focus-visible {
+  outline: 2px solid var(--signal-2);
+  outline-offset: 2px;
+}
+
+/* --- Typography --- */
+h1, h2, h3, h4, h5, h6 { line-height: 1.1; letter-spacing: -0.04em; }
+
+h1 { font-size: var(--text-hero); letter-spacing: -0.08em; }
+h2 { font-size: var(--text-3xl); }
+h3 { font-size: var(--text-2xl); }
+h4 { font-size: var(--text-xl); }
+
+p { line-height: 1.65; }
+
+code, pre, .mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.88em;
+}
+
+/* --- Background grid texture (shared) --- */
+.bg-grid {
+  background:
+    linear-gradient(90deg, rgba(214, 255, 63, 0.06) 1px, transparent 1px),
+    linear-gradient(rgba(255, 107, 26, 0.045) 1px, transparent 1px),
+    radial-gradient(circle at 88% 8%, rgba(255, 107, 26, 0.2), transparent 28rem),
+    var(--bg);
+  background-size: 56px 56px, 56px 56px, auto, auto;
+}
+
+/* --- Animations --- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-fade-up { animation: fadeUp 0.4s ease both; }
+.animate-fade-in { animation: fadeIn 0.3s ease both; }
+
+/* --- Responsive --- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

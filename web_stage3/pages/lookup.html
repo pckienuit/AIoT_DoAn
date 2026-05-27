@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tra cứu vé — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <style>
+    .lookup-box {
+      max-width: 500px;
+      margin: 0 auto var(--sp-6) auto;
+    }
+    .ticket-details {
+      max-width: 650px;
+      margin: 0 auto;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--sp-4);
+      background: var(--panel-strong);
+      padding: var(--sp-5);
+      border: 1px solid var(--border);
+      margin-bottom: var(--sp-5);
+    }
+    .detail-item {
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-1);
+    }
+    .detail-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .detail-value {
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Tra cứu hành trình</div>
+          <h1>Tra cứu vé máy bay</h1>
+          <p class="text-muted">Nhập mã đặt chỗ và thông tin liên hệ để xem chi tiết vé của bạn.</p>
+        </div>
+
+        <!-- Search Form -->
+        <div class="lookup-box panel" id="searchPanel">
+          <div class="panel__body">
+            <form id="lookupForm" novalidate>
+              <div style="display:grid; gap:var(--sp-4); margin-bottom:var(--sp-5);">
+                <div class="field">
+                  <label class="label" for="bookingCode">Mã đặt chỗ (Booking Code) <span style="color:var(--danger)">*</span></label>
+                  <input id="bookingCode" name="code" type="text" class="input mono font-bold"
+                    placeholder="VD: A1B2C3D4" style="text-transform: uppercase;" required />
+                </div>
+                <div class="field">
+                  <label class="label" for="contactInfo">Email hoặc Số điện thoại <span style="color:var(--danger)">*</span></label>
+                  <input id="contactInfo" name="contact" type="text" class="input"
+                    placeholder="VD: email@example.com hoặc 0901234567" required />
+                </div>
+              </div>
+
+              <div id="lookupError" class="alert alert--error" style="display:none; margin-bottom:var(--sp-4);"></div>
+
+              <button type="submit" class="btn btn--primary btn--full btn--lg" id="searchBtn">
+                Tìm kiếm vé
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Ticket Results (Hidden initially) -->
+        <div class="ticket-details panel" id="resultPanel" style="display:none;">
+          <div class="panel__header" style="justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:var(--sp-3);">
+              <span class="step-badge">✈</span>
+              <div>
+                <h2>Thông tin chi tiết vé</h2>
+                <p id="ticketSubtitle">Mã vé: —</p>
+              </div>
+            </div>
+            <div id="statusBadges" style="display:flex; gap:var(--sp-2);"></div>
+          </div>
+          <div class="panel__body">
+            <div class="detail-grid">
+              <div class="detail-item" style="grid-column: 1 / -1;">
+                <span class="detail-label">Hành khách</span>
+                <span class="detail-value" id="valPassengerName">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Email liên hệ</span>
+                <span class="detail-value" id="valPassengerEmail">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Số điện thoại</span>
+                <span class="detail-value mono" id="valPassengerPhone">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Chuyến bay</span>
+                <span class="detail-value mono" id="valFlightNumber">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Hành trình</span>
+                <span class="detail-value font-bold" id="valRoute">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Ngày bay</span>
+                <span class="detail-value mono" id="valDate">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Giờ khởi hành</span>
+                <span class="detail-value mono" id="valTime">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Số ghế đã chọn</span>
+                <span class="detail-value mono text-signal" id="valSeat">—</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tổng tiền vé</span>
+                <span class="detail-value text-signal font-bold" id="valPrice">—</span>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:var(--sp-3); justify-content:flex-end;" id="actionButtons">
+              <!-- Action buttons will be injected dynamically -->
+            </div>
+          </div>
+          <div class="panel__footer">
+            <button class="btn btn--ghost" id="newSearchBtn">Tra cứu mã vé khác</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetBooking, formatVND } from "../js/api.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearStaleFlow } from "../js/storage.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const lookupForm = document.getElementById("lookupForm");
+    const searchPanel = document.getElementById("searchPanel");
+    const resultPanel = document.getElementById("resultPanel");
+    const lookupError = document.getElementById("lookupError");
+
+    lookupForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      
+      const code = document.getElementById("bookingCode").value.trim().toUpperCase();
+      const contact = document.getElementById("contactInfo").value.trim().toLowerCase();
+
+      if (!code) {
+        showError("Vui lòng nhập Mã đặt chỗ.");
+        document.getElementById("bookingCode").focus();
+        return;
+      }
+      if (!contact) {
+        showError("Vui lòng nhập Email hoặc Số điện thoại liên hệ.");
+        document.getElementById("contactInfo").focus();
+        return;
+      }
+
+      const searchBtn = document.getElementById("searchBtn");
+      searchBtn.disabled = true;
+      searchBtn.innerHTML = `<span class="spinner"></span> Đang tìm kiếm…`;
+      lookupError.style.display = "none";
+
+      try {
+        const booking = await apiGetBooking(code);
+        
+        // Security check: passenger details must match input email or phone
+        const passengerEmail = String(booking.passenger_email || "").trim().toLowerCase();
+        const passengerPhone = String(booking.passenger_phone || "").trim();
+
+        if (contact !== passengerEmail && contact !== passengerPhone) {
+          throw new Error("Mã vé hoặc thông tin liên hệ không khớp. Vui lòng kiểm tra lại.");
+        }
+
+        renderTicketDetails(booking);
+      } catch (err) {
+        showError(err.message || "Không tìm thấy thông tin vé hoặc có lỗi xảy ra.");
+        searchBtn.disabled = false;
+        searchBtn.textContent = "Tìm kiếm vé";
+      }
+    });
+
+    function showError(msg) {
+      lookupError.textContent = msg;
+      lookupError.style.display = "block";
+    }
+
+    function renderTicketDetails(b) {
+      document.getElementById("ticketSubtitle").textContent = `Mã vé: ${b.booking_code}`;
+      document.getElementById("valPassengerName").textContent = b.passenger_name || b.user_name || "—";
+      document.getElementById("valPassengerEmail").textContent = b.passenger_email || "—";
+      document.getElementById("valPassengerPhone").textContent = b.passenger_phone || "—";
+      document.getElementById("valFlightNumber").textContent = b.flight_number || "—";
+      document.getElementById("valRoute").textContent = `${b.origin_city} (${b.origin_code}) → ${b.dest_city} (${b.dest_code})`;
+      document.getElementById("valDate").textContent = b.flight_date || "—";
+      document.getElementById("valTime").textContent = String(b.departure_time || "").substring(0, 5);
+      document.getElementById("valSeat").textContent = b.seat_number || "Chưa chọn ghế";
+      document.getElementById("valPrice").textContent = formatVND(b.total_price);
+
+      // Render status badges
+      const statusMap = {
+        confirmed: `<span class="badge badge--ok">Đã xác nhận</span>`,
+        checked_in: `<span class="badge badge--accent">Đã check-in</span>`,
+        cancelled: `<span class="badge badge--danger">Đã hủy</span>`,
+      };
+      const paymentMap = {
+        paid: `<span class="badge badge--ok">Đã thanh toán</span>`,
+        unpaid: `<span class="badge badge--warn">Chưa thanh toán</span>`,
+      };
+      document.getElementById("statusBadges").innerHTML = 
+        (statusMap[b.status] || "") + " " + (paymentMap[b.payment_status] || "");
+
+      // Render context action buttons
+      let buttonsHtml = "";
+      if (b.status === "confirmed") {
+        if (b.payment_status === "unpaid") {
+          buttonsHtml += `<a href="/payment?booking=${b.booking_code}" class="btn btn--accent btn--lg">Thanh toán ngay</a>`;
+        } else if (b.payment_status === "paid") {
+          buttonsHtml += `<a href="/checkin?booking=${b.booking_code}" class="btn btn--accent btn--lg">Check-in trực tuyến</a>`;
+          if (!b.face_registered) {
+            buttonsHtml += `<a href="/register-face?booking=${b.booking_code}" class="btn btn--primary btn--lg">Đăng ký khuôn mặt</a>`;
+          }
+        }
+
+        if (!b.seat_number) {
+          buttonsHtml += `<a href="/seat-map?booking=${b.booking_code}" class="btn btn--primary btn--lg">Chọn ghế ngồi</a>`;
+        } else {
+          buttonsHtml += `<a href="/seat-map?booking=${b.booking_code}" class="btn btn--ghost btn--lg">Đổi ghế ngồi</a>`;
+        }
+      }
+      
+      if (b.status !== "cancelled") {
+        buttonsHtml += `<button class="btn btn--ghost btn--lg" onclick="window.print()">In vé</button>`;
+      }
+
+      document.getElementById("actionButtons").innerHTML = buttonsHtml;
+
+      searchPanel.style.display = "none";
+      resultPanel.style.display = "block";
+    }
+
+    document.getElementById("newSearchBtn").addEventListener("click", () => {
+      document.getElementById("lookupForm").reset();
+      const searchBtn = document.getElementById("searchBtn");
+      searchBtn.disabled = false;
+      searchBtn.textContent = "Tìm kiếm vé";
+      
+      searchPanel.style.display = "block";
+      resultPanel.style.display = "none";
+    });
+  </script>
+</body>
+</html>

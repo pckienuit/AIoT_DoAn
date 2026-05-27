@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vé của tôi — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/tickets.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Quản lý vé</div>
+          <h1>Vé của tôi</h1>
+          <p class="text-muted">Xem, hủy, đổi ghế hoặc check-in cho các chuyến bay đã đặt.</p>
+        </div>
+
+        <div id="ticketList">
+          <!-- Loading -->
+          <div id="loadingState" style="display:none;">
+            <div class="ticket-skeleton"></div>
+            <div class="ticket-skeleton"></div>
+          </div>
+
+          <!-- Empty -->
+          <div id="emptyState" style="display:none;">
+            <div class="empty-state">
+              <div class="empty-state__icon">⊞</div>
+              <h2>Chưa có vé nào</h2>
+              <p class="text-muted">Bạn chưa đặt chuyến bay nào. Tìm kiếm và đặt vé ngay.</p>
+              <a href="/" class="btn btn--primary" style="margin-top:var(--sp-4);">Tìm chuyến bay</a>
+            </div>
+          </div>
+
+          <!-- Tickets -->
+          <div id="ticketsContainer" style="display:none;"></div>
+
+          <!-- Error -->
+          <div id="errorState" style="display:none;">
+            <div class="alert alert--error" id="errorMessage"></div>
+            <button class="btn btn--ghost" onclick="location.reload()" style="margin-top:var(--sp-3);">Thử lại</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Confirm cancel modal -->
+    <div class="modal-overlay" id="cancelModal" style="display:none;">
+      <div class="modal">
+        <div class="modal__header">
+          <h3>Xác nhận hủy vé</h3>
+          <button class="modal__close" id="cancelModalClose">✕</button>
+        </div>
+        <div class="modal__body">
+          <p>Bạn có chắc chắn muốn hủy vé <strong class="mono" id="cancelBookingCode"></strong>?</p>
+          <p class="text-muted text-sm" style="margin-top:var(--sp-3);">Lưu ý: vé đã thanh toán sẽ không được hoàn tiền tự động.</p>
+        </div>
+        <div class="modal__footer">
+          <button class="btn btn--ghost" id="cancelModalCancel">Không, giữ lại</button>
+          <button class="btn btn--danger" id="cancelModalConfirm">Hủy vé</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetMyBookings, apiCancelBooking, apiChangeSeat } from "../js/api.js";
+    import { createTicketCard } from "../js/components/ticket-card.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { getUser } from "../js/auth.js";
+    import { clearStaleFlow } from "../js/storage.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    let allBookings = [];
+
+    async function loadBookings() {
+      document.getElementById("loadingState").style.display = "block";
+      document.getElementById("emptyState").style.display = "none";
+      document.getElementById("ticketsContainer").style.display = "none";
+      document.getElementById("errorState").style.display = "none";
+
+      try {
+        allBookings = await apiGetMyBookings();
+        document.getElementById("loadingState").style.display = "none";
+        renderBookings();
+      } catch (err) {
+        document.getElementById("loadingState").style.display = "none";
+        if (err.status === 401 || err.status === 403) {
+          navigate("/login?return=/my-tickets");
+        } else {
+          document.getElementById("errorMessage").textContent = "Không thể tải danh sách vé: " + err.message;
+          document.getElementById("errorState").style.display = "block";
+        }
+      }
+    }
+
+    function renderBookings() {
+      if (!allBookings.length) {
+        document.getElementById("emptyState").style.display = "block";
+        return;
+      }
+
+      document.getElementById("ticketsContainer").style.display = "grid";
+      const container = document.getElementById("ticketsContainer");
+
+      // Filter: show upcoming/active bookings first, then cancelled/refunded
+      const active = allBookings.filter(b => !["cancelled", "refunded"].includes(b.status));
+      const inactive = allBookings.filter(b => ["cancelled", "refunded"].includes(b.status));
+
+      container.innerHTML = active.map(b => createTicketCard(b, {
+        onCancel: () => openCancelModal(b),
+        onChangeSeat: () => navigate(`/seat-map?booking=${b.booking_code}`),
+        onCheckin: () => navigate(`/checkin?booking=${b.booking_code}`),
+      })).join("") + inactive.map(b => createTicketCard(b, {
+        onCancel: null,
+        onChangeSeat: null,
+        onCheckin: null,
+      })).join("");
+
+      // Attach event listeners for button actions
+      container.querySelectorAll("[data-action='cancel']").forEach(btn => {
+        const code = btn.closest(".ticket-card")?.querySelector(".booking-code")?.textContent;
+        const booking = allBookings.find(b => b.booking_code === code);
+        if (booking) btn.addEventListener("click", () => openCancelModal(booking));
+      });
+
+      container.querySelectorAll("[data-action='print']").forEach(btn => {
+        btn.addEventListener("click", () => window.print());
+      });
+    }
+
+    // Cancel modal
+    let pendingCancelBooking = null;
+
+    function openCancelModal(booking) {
+      pendingCancelBooking = booking;
+      document.getElementById("cancelBookingCode").textContent = booking.booking_code;
+      document.getElementById("cancelModal").style.display = "flex";
+    }
+
+    function closeCancelModal() {
+      pendingCancelBooking = null;
+      document.getElementById("cancelModal").style.display = "none";
+    }
+
+    document.getElementById("cancelModalClose")?.addEventListener("click", closeCancelModal);
+    document.getElementById("cancelModalCancel")?.addEventListener("click", closeCancelModal);
+
+    document.getElementById("cancelModalConfirm")?.addEventListener("click", async () => {
+      if (!pendingCancelBooking) return;
+      const btn = document.getElementById("cancelModalConfirm");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang hủy…`;
+
+      try {
+        await apiCancelBooking(pendingCancelBooking.id);
+        closeCancelModal();
+        await loadBookings();
+      } catch (err) {
+        alert("Không thể hủy vé: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Hủy vé";
+      }
+    });
+
+    // Close modal on overlay click
+    document.getElementById("cancelModal")?.addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeCancelModal();
+    });
+
+    loadBookings();
+  </script>
+
+  <style>
+    .ticket-skeleton {
+      height: 200px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: var(--sp-4);
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer {
+      0% { opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { opacity: 0.5; }
+    }
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 90%; max-width: 440px;
+      overflow: hidden;
+    }
+    .modal__header {
+      padding: var(--sp-5);
+      background: var(--panel-strong);
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal__body { padding: var(--sp-5); }
+    .modal__footer {
+      padding: var(--sp-4) var(--sp-5);
+      border-top: 1px solid var(--border);
+      display: flex; gap: var(--sp-3); justify-content: flex-end;
+    }
+    .modal__close {
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: 1.2rem; padding: 4px;
+    }
+    .modal__close:hover { color: var(--text); }
+  </style>
+</body>
+</html>

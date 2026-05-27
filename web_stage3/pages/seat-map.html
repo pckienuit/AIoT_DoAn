@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chọn ghế — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+  <link rel="stylesheet" href="../css/pages/seat-map.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Bước 3 / 4</div>
+          <h1>Chọn ghế</h1>
+          <p class="text-muted" id="flightInfo">Đang tải thông tin chuyến bay…</p>
+        </div>
+
+        <div class="page__grid page__grid--sidebar">
+          <!-- Seat map -->
+          <div class="panel">
+            <div class="panel__header">
+              <span class="step-badge">A</span>
+              <div>
+                <h2>Sơ đồ ghế</h2>
+                <p>Click vào ghế trống để chọn. Ghế extra legroom có phụ thu.</p>
+              </div>
+            </div>
+            <div class="panel__body">
+              <div class="seat-map-container" id="seatMapContainer"></div>
+            </div>
+          </div>
+
+          <!-- Sidebar summary -->
+          <div class="seat-summary panel">
+            <div class="panel__header">
+              <span class="step-badge">B</span>
+              <div>
+                <h2>Tóm tắt</h2>
+                <p>Thông tin chuyến bay và thanh toán.</p>
+              </div>
+            </div>
+            <div class="panel__body" id="seatSummary">
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Chuyến bay</span>
+                <span class="seat-summary__value" id="summaryFlight">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Hành khách</span>
+                <span class="seat-summary__value" id="summaryPassenger">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Ghế đã chọn</span>
+                <span class="seat-summary__value text-signal" id="summarySeat">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Phụ thu ghế</span>
+                <span class="seat-summary__value" id="summarySurcharge">—</span>
+              </div>
+              <div class="seat-summary__item">
+                <span class="seat-summary__label">Giá vé</span>
+                <span class="seat-summary__value" id="summaryPrice">—</span>
+              </div>
+              <div class="seat-summary__total">
+                <span class="seat-summary__total-label">Tổng cộng</span>
+                <span class="seat-summary__total-value" id="summaryTotal">—</span>
+              </div>
+            </div>
+            <div class="panel__footer" style="flex-direction:column;gap:8px;">
+              <button class="btn btn--primary btn--full btn--lg" id="confirmSeatBtn" disabled>
+                Xác nhận ghế & thanh toán
+              </button>
+              <a href="/booking" class="btn btn--ghost btn--full">← Quay lại</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner"><span>© 2026 AIoT Flight</span></div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats, apiChangeSeat } from "../js/api.js";
+    import { createSeatPicker } from "../js/components/seat-picker.js";
+    import { navigate } from "../js/router.js";
+    import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
+    import { getToken, restoreSession } from "../js/auth.js";
+    import { formatVND } from "../js/components/flight-card.js";
+
+    clearStaleFlow();
+    await restoreSession();
+    render();
+
+    const flow = getBookingFlow();
+    const bookingCode = new URLSearchParams(location.search).get("booking");
+    const flightIdParam = new URLSearchParams(location.search).get("flight");
+
+    let flight = flow.flight || null;
+
+    if (bookingCode && !flight) {
+      try {
+        const { apiGetBooking } = await import("../js/api.js");
+        const booking = await apiGetBooking(bookingCode);
+        saveBookingFlow({ ...flow, bookingCode, booking });
+        flight = await apiGetFlight(booking.flight_id);
+        saveBookingFlow({ ...flow, flight, bookingCode, booking });
+      } catch {
+        navigate("/");
+        throw new Error("Unable to load booking for seat map");
+      }
+    }
+
+    const flightId = flightIdParam || flight?.id;
+    if (!flightId) {
+      navigate("/");
+      throw new Error("Missing flight id for seat map");
+    }
+
+    let seats = [];
+    let selectedSeats = Array.isArray(flow.seatNumbers)
+      ? [...flow.seatNumbers]
+      : (flow.seatNumber ? [flow.seatNumber] : []);
+    let extraSurcharge = 0;
+
+    async function init() {
+      const mapEl = document.getElementById("seatMapContainer");
+      mapEl.innerHTML = `<div class="alert alert--info">Đang tải sơ đồ ghế...</div>`;
+
+      if (!flight) {
+        try {
+          flight = await apiGetFlight(flightId);
+        } catch (err) {
+          showSeatMapError(`Không tải được thông tin chuyến bay: ${err.message}`);
+          return;
+        }
+      }
+
+      try {
+        const seatResponse = await apiGetFlightSeats(flightId);
+        seats = Array.isArray(seatResponse?.seats) ? seatResponse.seats : [];
+      } catch (err) {
+        showSeatMapError(`Không tải được sơ đồ ghế: ${err.message}`);
+        return;
+      }
+
+      if (!seats.length) {
+        showSeatMapError("Chuyến bay này chưa có dữ liệu ghế.");
+        return;
+      }
+
+      document.getElementById("flightInfo").textContent =
+        `${flight.flight_number || ""} · ${flight.origin_code || ""} → ${flight.dest_code || ""} · ${flight.flight_date || ""}`;
+      document.getElementById("summaryFlight").textContent = `${flight.flight_number || ""} · ${flight.origin_code || ""} → ${flight.dest_code || ""}`;
+      document.getElementById("summaryPassenger").textContent = flow.passengerName || flow.passengers + " khách";
+      updateSummary();
+
+      const picker = createSeatPicker({
+        container: mapEl,
+        seats,
+        selectedSeats,
+        onSelect: (sel) => {
+          selectedSeats = sel;
+          saveBookingFlow({ ...flow, seatNumbers: selectedSeats, seatNumber: selectedSeats.join(", ") });
+          updateSummary();
+          document.getElementById("confirmSeatBtn").disabled = sel.length === 0;
+        },
+      });
+      picker.mount(mapEl);
+      document.getElementById("confirmSeatBtn").disabled = selectedSeats.length === 0;
+    }
+
+    function showSeatMapError(message) {
+      document.getElementById("flightInfo").textContent = "Không thể tải sơ đồ ghế";
+      document.getElementById("seatMapContainer").innerHTML =
+        `<div class="alert alert--error"><strong>Lỗi:</strong> ${message}</div>`;
+    }
+
+    function updateSummary() {
+      const seatLabel = selectedSeats.length ? selectedSeats.join(", ") : "—";
+      document.getElementById("summarySeat").textContent = seatLabel;
+
+      const surcharge = selectedSeats.reduce((sum, seat) => {
+        const seatData = seats.find(s => s.seat === seat);
+        return sum + (seatData?.surcharge || 0);
+      }, 0);
+      extraSurcharge = surcharge;
+      document.getElementById("summarySurcharge").textContent = surcharge > 0 ? formatVND(surcharge) : "—";
+
+      const basePrice = flight?.base_price || 0;
+      const passengers = flow.passengers || 1;
+      const ticketCount = Math.max(passengers, selectedSeats.length || 1);
+      const price = basePrice * ticketCount;
+      document.getElementById("summaryPrice").textContent = formatVND(price);
+
+      const total = price + surcharge;
+      document.getElementById("summaryTotal").textContent = formatVND(total);
+    }
+
+    document.getElementById("confirmSeatBtn").addEventListener("click", async () => {
+      if (!selectedSeats.length) return;
+
+      const btn = document.getElementById("confirmSeatBtn");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang xử lý...`;
+
+      const passengers = flow.passengers || 1;
+      const ticketCount = Math.max(passengers, selectedSeats.length);
+      const seatNumber = selectedSeats.join(", ");
+      const totalPrice = (flight?.base_price || 0) * ticketCount + extraSurcharge;
+
+      try {
+        if (bookingCode && flow.booking) {
+          // Changing seat of an existing booking
+          await apiChangeSeat(flow.booking.id, seatNumber);
+          // Update flow booking seat
+          const updatedBooking = { ...flow.booking, seat_number: seatNumber };
+          saveBookingFlow({
+            ...flow,
+            seatNumber,
+            seatNumbers: selectedSeats,
+            booking: updatedBooking
+          });
+          navigate(`/payment?booking=${bookingCode}`);
+        } else {
+          // New booking flow: just save to storage and navigate to payment
+          saveBookingFlow({
+            ...flow,
+            seatNumber,
+            seatNumbers: selectedSeats,
+            passengers: ticketCount,
+            extraSurcharge,
+            totalPrice
+          });
+          navigate("/payment");
+        }
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Xác nhận ghế & thanh toán";
+        showSeatMapError(`Lỗi xử lý ghế: ${err.message}`);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Xác nhận Check-in — AIoT Flight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../css/base.css" />
+  <link rel="stylesheet" href="../css/components.css" />
+  <link rel="stylesheet" href="../css/layout.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="nav-placeholder"></div>
+
+    <main class="page">
+      <div class="shell">
+        <div class="page__header">
+          <div class="eyebrow">Xác nhận vé</div>
+          <h1>Check-in trực tuyến</h1>
+          <p class="text-muted">Kiểm tra thông tin chuyến bay của bạn và thực hiện check-in.</p>
+        </div>
+
+        <div style="max-width: 600px; margin: 0 auto;">
+          <div class="panel">
+            <div class="panel__header">
+              <span class="step-badge">✓</span>
+              <div>
+                <h2>Thông tin chuyến bay</h2>
+                <p>Vui lòng kiểm tra kỹ thông tin hành trình trước khi thực hiện check-in.</p>
+              </div>
+            </div>
+            <div class="panel__body">
+              <div id="resultContent">
+                <div class="alert alert--info">Đang tải thông tin vé...</div>
+              </div>
+              
+              <div id="checkinFeedback" class="alert" style="display:none; margin-top: var(--sp-4);"></div>
+
+              <div style="display:flex; gap:var(--sp-3); margin-top:var(--sp-5); justify-content: flex-end;">
+                <button id="confirmCheckinBtn" class="btn btn--primary btn--lg" disabled>
+                  Xác nhận Check-in
+                </button>
+                <a href="/" class="btn btn--ghost btn--lg">Quay lại</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer__inner">
+        <span>© 2026 AIoT Flight</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module">
+    import { render } from "../js/components/nav.js";
+    import { apiGetBooking, apiCheckin } from "../js/api.js";
+    import { navigate } from "../js/router.js";
+    import { registerRoutes } from "../js/routes.js";
+    import { clearStaleFlow } from "../js/storage.js";
+
+    registerRoutes();
+    clearStaleFlow();
+    render();
+
+    const bookingCode = new URLSearchParams(location.search).get("booking");
+
+    if (!bookingCode) {
+      alert("Không tìm thấy mã booking.");
+      navigate("/");
+    }
+
+    let booking = null;
+
+    async function loadBooking() {
+      try {
+        booking = await apiGetBooking(bookingCode);
+        document.getElementById("resultContent").innerHTML = buildBookingInfo(booking);
+        
+        const checkinBtn = document.getElementById("confirmCheckinBtn");
+        
+        if (booking.status === "checked_in") {
+          showFeedback("warning", "Vé này đã được check-in thành công trước đó.");
+          checkinBtn.disabled = true;
+        } else if (booking.status === "cancelled") {
+          showFeedback("error", "Vé này đã bị hủy, không thể thực hiện check-in.");
+          checkinBtn.disabled = true;
+        } else if (booking.payment_status !== "paid") {
+          showFeedback("error", "Vé này chưa được thanh toán. Vui lòng thanh toán trước khi check-in.");
+          checkinBtn.disabled = true;
+          
+          const actionContainer = checkinBtn.parentNode;
+          const payBtn = document.createElement("a");
+          payBtn.href = `/payment?booking=${booking.booking_code}`;
+          payBtn.className = "btn btn--accent btn--lg";
+          payBtn.textContent = "Thanh toán ngay";
+          actionContainer.insertBefore(payBtn, checkinBtn);
+          checkinBtn.style.display = "none";
+        } else {
+          checkinBtn.disabled = false;
+        }
+      } catch (err) {
+        document.getElementById("resultContent").innerHTML = `
+          <div class="alert alert--error">
+            <strong>Không tìm thấy booking.</strong> Vui lòng kiểm tra mã vé.
+          </div>`;
+      }
+    }
+
+    function showFeedback(type, msg) {
+      const el = document.getElementById("checkinFeedback");
+      el.className = `alert alert--${type}`;
+      el.textContent = msg;
+      el.style.display = "block";
+    }
+
+    function buildBookingInfo(b) {
+      const statusBadge = {
+        confirmed: `<span class="badge badge--ok">Đã xác nhận</span>`,
+        checked_in: `<span class="badge badge--accent">Đã check-in</span>`,
+        cancelled: `<span class="badge badge--danger">Đã hủy</span>`,
+      }[b.status] || `<span class="badge badge--muted">${b.status}</span>`;
+
+      const paymentBadge = b.payment_status === "paid"
+        ? `<span class="badge badge--ok">Đã thanh toán</span>`
+        : `<span class="badge badge--warn">Chưa thanh toán</span>`;
+
+      return `
+        <div style="display:grid;gap:var(--sp-4);">
+          <div style="text-align:center;">
+            <div class="mono text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;">Mã đặt chỗ</div>
+            <div class="booking-code" style="font-size:1.6rem; font-weight: 800; color: var(--signal);">${b.booking_code}</div>
+          </div>
+          <hr style="border-color:var(--border);" />
+          <div style="display:grid;gap:var(--sp-3); background: var(--panel-strong); padding: var(--sp-4); border: 1px solid var(--border);">
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Hành trình</span>
+              <span class="mono font-bold">${b.origin_code} → ${b.dest_code}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Chuyến bay</span>
+              <span class="mono font-bold">${b.flight_number}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Ngày bay</span>
+              <span class="mono">${b.flight_date}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Giờ khởi hành</span>
+              <span class="mono">${String(b.departure_time || "").substring(0, 5)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Hành khách</span>
+              <span style="font-weight: 600;">${b.passenger_name || b.user_name}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Email liên hệ</span>
+              <span>${b.passenger_email || "—"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Số điện thoại</span>
+              <span class="mono">${b.passenger_phone || "—"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Số ghế</span>
+              <span class="mono font-bold text-signal">${b.seat_number || "Chưa chọn ghế"}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Thanh toán</span>
+              <span>${paymentBadge}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span class="text-muted text-sm">Trạng thái</span>
+              <span>${statusBadge}</span>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    document.getElementById("confirmCheckinBtn").addEventListener("click", async () => {
+      if (!booking) return;
+
+      const btn = document.getElementById("confirmCheckinBtn");
+      btn.disabled = true;
+      btn.innerHTML = `<span class="spinner"></span> Đang xử lý…`;
+
+      try {
+        await apiCheckin(booking.id);
+        document.getElementById("resultContent").innerHTML = `
+          <div style="text-align:center; padding: var(--sp-6);">
+            <div style="font-size:4rem; color:var(--ok); margin-bottom: var(--sp-4);">✓</div>
+            <h2 style="color:var(--ok); font-weight:700;">Check-in thành công!</h2>
+            <p class="text-muted" style="margin-top:var(--sp-2); margin-bottom: var(--sp-6);">
+              Cảm ơn bạn đã check-in. Chúc bạn có chuyến đi tốt đẹp!
+            </p>
+            <div style="display: flex; gap: var(--sp-3); justify-content: center;">
+              <button class="btn btn--primary" onclick="window.print()">In vé</button>
+              <a href="/" class="btn btn--ghost">Quay lại trang chủ</a>
+            </div>
+          </div>`;
+        document.getElementById("checkinFeedback").style.display = "none";
+        btn.style.display = "none";
+      } catch (err) {
+        showFeedback("error", "Lỗi check-in: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Xác nhận Check-in";
+      }
+    });
+
+    loadBooking();
+  </script>
+</body>
+</html>
