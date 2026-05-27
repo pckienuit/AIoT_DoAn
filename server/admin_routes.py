@@ -705,6 +705,7 @@ def trigger_sync(payload: SyncTriggerRequest) -> dict[str, Any]:
                 sftp.close()
 
             if payload.mode == "direct":
+                _ssh_run(client, f"echo {fid} > /root/active_flight.txt")
                 rc, out = _ssh_run(
                     client,
                     f"cd /root && python -c \"from sync_cache import CacheManager; from config import load_config; cfg = load_config(); CacheManager(cfg).sync({fid})\" 2>&1 || true"
@@ -776,10 +777,108 @@ def get_sync_status() -> dict[str, Any]:
 
 
 @router.delete("/sync/cache/{flight_id}")
-def delete_flight_cache(flight_id: int) -> dict[str, Any]:
-    """Manually delete a flight's cache file from the edge device."""
-    result = _cleanup_flight_cache(client=None, flight_id=flight_id)
+def delete_flight_cache(flight_id: str) -> dict[str, Any]:
+    """Delete cache file(s) from the edge device.
+
+    Path /sync/cache/all  → delete all flight cache files.
+    Path /sync/cache/{N}  → delete cache for flight ID N only.
+    """
+    if flight_id == "all":
+        return _delete_all_caches_impl()
+
+    try:
+        fid = int(flight_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid flight ID: {flight_id}")
+
+    result = _cleanup_flight_cache(client=None, flight_id=fid)
     return result
+
+
+def _delete_all_caches_impl() -> dict[str, Any]:
+    """Shared implementation for deleting all caches (used by both the route and face-deletion)."""
+    try:
+        client = _make_ssh_client()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot connect to MaixCAM device: {str(exc)}",
+        ) from exc
+
+    try:
+        _, ls_out = _ssh_run(client, "ls -1 /root/cache/flight_*.json 2>/dev/null || true")
+        existing_files = [f.strip() for f in ls_out.split("\n") if f.strip()]
+
+        if not existing_files:
+            return {"success": True, "deleted": [], "deleted_count": 0,
+                    "device_reachable": True, "message": "No cache files found"}
+
+        deleted, errors = [], []
+        for path in existing_files:
+            fname = path.rsplit("/", 1)[-1]
+            rc, out = _ssh_run(client, f"rm -f /root/cache/{fname}")
+            (deleted if rc == 0 else errors).append(
+                fname if rc == 0 else {"file": fname, "error": out}
+            )
+
+        _ssh_run(client, "rm -f /root/active_flight.txt")
+
+        return {
+            "success": len(errors) == 0,
+            "deleted": deleted,
+            "deleted_count": len(deleted),
+            "errors": errors,
+            "device_reachable": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        client.close()
+
+
+# NOTE: The /sync/cache/all static route is removed — the "all" case is now
+# handled inside the parameterized /sync/cache/{flight_id} route above.
+# This avoids FastAPI's route-matching ambiguity between static and param routes.
+
+
+# ---------------------------------------------------------------------------
+# Database Management
+# ---------------------------------------------------------------------------
+
+@router.post("/db/clear")
+def clear_database_endpoint() -> dict[str, Any]:
+    """Clear all data from the SQLite prototype database."""
+    from server.database import USE_MYSQL
+    if USE_MYSQL:
+        raise HTTPException(
+            status_code=400,
+            detail="This operation is only supported for SQLite (prototype) DB",
+        )
+    try:
+        from server.seed import clear_database
+        counts = clear_database()
+        return {"success": True, "cleared": counts}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/db/seed")
+def seed_database_endpoint() -> dict[str, Any]:
+    """Clear and re-seed the SQLite prototype database with fresh demo data."""
+    from server.database import USE_MYSQL
+    if USE_MYSQL:
+        raise HTTPException(
+            status_code=400,
+            detail="This operation is only supported for SQLite (prototype) DB",
+        )
+    try:
+        from server.seed import seed_database
+        result = seed_database()
+        return {"success": True, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

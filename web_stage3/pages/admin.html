@@ -98,9 +98,23 @@
                 <p style="color:var(--muted);font-size:var(--text-sm);">Chạy thủ công logic tự động cập nhật departed/arrived</p>
               </div>
             </div>
-            <div class="panel__body" style="display:flex;gap:var(--sp-4);flex-wrap:wrap;">
+            <div class="panel__body" style="display:flex;gap:var(--sp-4);flex-wrap:wrap;align-items:center;">
               <button class="btn btn--primary" id="runFlightStatusBtn">Chạy cập nhật trạng thái</button>
-              <span id="flightStatusResult" style="color:var(--muted);font-size:var(--text-sm);display:flex;align-items:center;"></span>
+              <span id="flightStatusResult" style="color:var(--muted);font-size:var(--text-sm);"></span>
+            </div>
+          </div>
+
+          <div class="panel panel--raised" style="margin-bottom:var(--sp-6);border-color:var(--warn);">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);">
+              <div>
+                <h3 style="margin-bottom:2px;">Quản lý Database</h3>
+                <p style="color:var(--muted);font-size:var(--text-sm);">Chỉ dùng cho prototype SQLite — không áp dụng với MySQL production</p>
+              </div>
+            </div>
+            <div class="panel__body" style="display:flex;gap:var(--sp-4);flex-wrap:wrap;align-items:center;">
+              <button class="btn btn--ghost" id="clearDbBtn">Clear DB</button>
+              <button class="btn btn--primary" id="seedDbBtn">Seed DB</button>
+              <span id="dbOperationResult" style="color:var(--muted);font-size:var(--text-sm);"></span>
             </div>
           </div>
 
@@ -263,9 +277,10 @@
                 <span class="mono" style="font-size:var(--text-base);" id="deviceHostDisplay">—</span>
               </div>
             </div>
-            <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;">
+            <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;">
               <button class="btn btn--ghost" id="checkDeviceBtn">Kiểm tra thiết bị</button>
               <button class="btn btn--primary" id="syncAllBtn">Sync All (Flight 999999)</button>
+              <button class="btn btn--ghost" id="deleteAllCacheBtn" style="border-color:var(--danger);color:var(--danger);">Delete All Cache</button>
             </div>
           </div>
 
@@ -670,6 +685,55 @@
       }
     });
 
+    // --- Clear DB ---
+    document.getElementById("clearDbBtn").addEventListener("click", async () => {
+      if (!confirm("Xóa TOÀN BỘ dữ liệu trong SQLite prototype DB?\n\nHành động này không thể hoàn tác!")) return;
+      const btn = document.getElementById("clearDbBtn");
+      const result = document.getElementById("dbOperationResult");
+      btn.disabled = true;
+      btn.textContent = "Đang xóa…";
+      result.textContent = "";
+      try {
+        const res = await adminRequest("/api/admin/db/clear", { method: "POST" });
+        const total = Object.values(res.cleared).reduce((s, v) => s + (typeof v === "number" ? v : 0), 0);
+        result.textContent = `Đã xóa ${total} rows từ ${Object.keys(res.cleared).length} tables`;
+        toast(`Đã xóa ${total} rows!`, "success");
+        loadDashboard();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+        result.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Clear DB";
+      }
+    });
+
+    // --- Seed DB ---
+    document.getElementById("seedDbBtn").addEventListener("click", async () => {
+      if (!confirm("Clear toàn bộ dữ liệu và tạo lại data mẫu?\n\nHành động này không thể hoàn tác!")) return;
+      const btn = document.getElementById("seedDbBtn");
+      const result = document.getElementById("dbOperationResult");
+      btn.disabled = true;
+      btn.textContent = "Đang seed…";
+      result.textContent = "Đang xóa và tạo lại data…";
+      try {
+        const res = await adminRequest("/api/admin/db/seed", { method: "POST" });
+        const byStatus = Object.entries(res)
+          .filter(([k]) => ["scheduled","boarding","departed","arrived","cancelled"].includes(k))
+          .map(([k,v]) => `${k}: ${v}`)
+          .join(" · ") || `tổng: ${Object.values(res).reduce((s,v)=>s+(typeof v==="number"?v:0),0)}`;
+        result.textContent = `${Object.values(res).reduce((s,v)=>s+(typeof v==="number"?v:0),0)} flights · ${byStatus}`;
+        toast("Seed database thành công!", "success");
+        loadDashboard();
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+        result.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Seed DB";
+      }
+    });
+
     // ============================================================
     // Flights
     // ============================================================
@@ -1021,6 +1085,36 @@
       document.getElementById("selectedFlightCount").textContent =
         count > 0 ? `${count} chuyến bay đã chọn` : "";
     }
+
+    // --- Delete All Cache ---
+    document.getElementById("deleteAllCacheBtn").addEventListener("click", async () => {
+      if (!confirm("Xóa TẤT CẢ cache files trên edge device?\n\nThao tác này không thể hoàn tác!")) return;
+      const btn = document.getElementById("deleteAllCacheBtn");
+      const logEl = document.getElementById("syncLog");
+      btn.disabled = true;
+      btn.textContent = "Đang xóa…";
+      logEl.style.display = "block";
+      logEl.textContent = "Đang kết nối và xóa cache trên edge…";
+      try {
+        const res = await adminRequest("/api/admin/sync/cache/all", { method: "DELETE" });
+        if (res.message) {
+          logEl.textContent = res.message;
+        } else {
+          logEl.textContent = `Đã xóa ${res.deleted_count} files:\n${res.deleted.join("\n")}`;
+          if (res.errors?.length) {
+            logEl.textContent += `\n\nLỗi:\n${res.errors.map(e => `${e.file}: ${e.error}`).join("\n")}`;
+          }
+        }
+        toast(`Đã xóa ${res.deleted_count} cache files!`, "success");
+        checkDeviceStatus();
+      } catch (e) {
+        logEl.textContent = "Lỗi: " + e.message;
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Delete All Cache";
+      }
+    });
 
     async function checkDeviceStatus() {
       const dot = document.getElementById("deviceStatusDot");

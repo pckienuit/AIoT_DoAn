@@ -280,10 +280,20 @@ def seed_schedules() -> int:
     return count
 
 
-def seed_flights(days_ahead: int = 14, start_date: date | None = None) -> int:
-    """Generate missing flights for the next N days for each active schedule."""
+def seed_flights(days_ahead: int = 30, start_date: date | None = None) -> dict[str, int]:
+    """
+    Generate missing flights from today onward for each active schedule.
+
+    Returns a dict with counts per status:
+      scheduled, boarding, departed, arrived, cancelled.
+    """
     today = start_date or date.today()
-    count = 0
+    now = datetime.now()
+    now_time = now.time()
+    counts: dict[str, int] = {
+        "scheduled": 0, "boarding": 0,
+        "departed": 0, "arrived": 0, "cancelled": 0,
+    }
 
     schedules = _fetch_all(
         """
@@ -292,41 +302,71 @@ def seed_flights(days_ahead: int = 14, start_date: date | None = None) -> int:
         JOIN planes p ON p.id = s.plane_id
         """
     )
+
     for sched in schedules:
         s_id = sched["id"]
         total_seats = int(sched.get("total_seats") or 180)
+        dep_str = str(sched.get("departure_time") or "00:00")
 
         for day_offset in range(days_ahead):
             flight_date = today + timedelta(days=day_offset)
-            departure_time = str(sched.get("departure_time") or "")
-            if flight_date == date.today() and departure_time <= datetime.now().strftime("%H:%M:%S"):
+            flight_date_str = str(flight_date)
+
+            # Skip today if departure time already passed
+            if flight_date == today and dep_str <= now_time.strftime("%H:%M"):
                 continue
 
             existing = _fetch_one(
-                "SELECT id FROM flights WHERE schedule_id = ? AND flight_date = ?",
-                (s_id, str(flight_date)),
+                "SELECT id, status FROM flights WHERE schedule_id = ? AND flight_date = ?",
+                (s_id, flight_date_str),
             )
             if existing:
                 continue
 
             flight_num = _generate_unique_flight_number()
-
             multiplier = round(random.uniform(0.9, 1.25), 2)
             booked_preview = random.randint(0, min(35, max(0, total_seats - 1)))
             avail_seats = max(1, total_seats - booked_preview)
+
+            # Determine status based on time window
+            if day_offset == 0:
+                # Today — vary statuses so admin can see all states
+                dep_minutes = _time_to_minutes(dep_str)
+                now_minutes = now.hour * 60 + now.minute
+                if now_minutes < dep_minutes - 45:          # >45 min away → scheduled
+                    status = random.choice(["scheduled", "scheduled", "cancelled"])
+                elif now_minutes < dep_minutes - 5:          # 5–45 min → boarding
+                    status = random.choice(["scheduled", "boarding"])
+                elif now_minutes < dep_minutes + 30:         # departure → 30 min after → departed
+                    status = random.choice(["boarding", "departed"])
+                else:                                        # >30 min after dep → arrived
+                    status = random.choice(["departed", "arrived"])
+            else:
+                # Future days — mostly scheduled, small chance cancelled
+                status = random.choice(["scheduled"] * 9 + ["cancelled"])
 
             _execute(
                 """
                 INSERT INTO flights
                 (schedule_id, flight_date, flight_number, status, available_seats, price_multiplier)
-                VALUES (?, ?, ?, 'scheduled', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (s_id, str(flight_date), flight_num, avail_seats, multiplier),
+                (s_id, flight_date_str, flight_num, status, avail_seats, multiplier),
             )
-            count += 1
+            counts[status] = counts.get(status, 0) + 1
 
-    print(f"  [OK]   flights: {count} rows ({days_ahead} days × {len(schedules)} schedules)")
-    return count
+    print(
+        f"  [OK]   flights: {sum(counts.values())} rows "
+        f"({days_ahead} days × {len(schedules)} schedules) | "
+        + " | ".join(f"{k}={v}" for k, v in counts.items() if v > 0)
+    )
+    return counts
+
+
+def _time_to_minutes(t: str) -> int:
+    """Convert HH:MM string to minutes since midnight."""
+    parts = t.split(":")
+    return int(parts[0]) * 60 + int(parts[1])
 
 
 def cleanup_old_flights(now: datetime | None = None) -> int:
@@ -364,7 +404,47 @@ def cleanup_old_flights(now: datetime | None = None) -> int:
     return deleted
 
 
-def maintain_prototype_flights(days_ahead: int = 14) -> dict[str, int]:
+def clear_database() -> dict[str, int]:
+    """Drop all data from all tables (foreign key order). Returns counts per table."""
+    if USE_MYSQL:
+        tables_ordered = [
+            "payments", "seat_holds", "bookings",
+            "passengers", "flights", "schedules",
+            "routes", "planes", "airports", "users",
+        ]
+    else:
+        # SQLite: delete in FK dependency order
+        tables_ordered = [
+            "payments", "seat_holds", "bookings",
+            "passengers", "flights", "schedules",
+            "routes", "planes", "airports", "users",
+        ]
+
+    counts = {}
+    for table in tables_ordered:
+        try:
+            with get_connection() as conn:
+                cur = conn.execute(f"DELETE FROM {table}")
+                conn.commit()
+                counts[table] = cur.rowcount
+        except Exception as exc:
+            counts[table] = f"error: {exc}"
+
+    return counts
+
+
+def seed_database(days_ahead: int = 30) -> dict[str, Any]:
+    """Run full seed: clear + re-populate. Returns detailed flight counts per status."""
+    if USE_MYSQL:
+        raise RuntimeError("seed_database() is only supported for SQLite prototype DB")
+
+    cleared = clear_database()
+    result = maintain_prototype_flights(days_ahead=days_ahead)
+    result["cleared_tables"] = cleared
+    return result
+
+
+def maintain_prototype_flights(days_ahead: int = 30) -> dict[str, Any]:
     """Keep SQLite prototype data fresh on server startup."""
     seed_airports()
     seed_planes()
@@ -372,7 +452,7 @@ def maintain_prototype_flights(days_ahead: int = 14) -> dict[str, int]:
     seed_schedules()
     deleted = cleanup_old_flights()
     created = seed_flights(days_ahead=days_ahead)
-    return {"deleted": deleted, "created": created}
+    return {"deleted": deleted, **created}
 
 
 # ---------------------------------------------------------------------------

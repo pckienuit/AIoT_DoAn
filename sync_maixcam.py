@@ -177,6 +177,10 @@ print("[direct] Syncing flights:", flight_ids)
 print(cache.sync_all(flight_ids))
 """
     else:
+        rc, out = ssh_run(client, "echo {} > /root/active_flight.txt".format(int(flight_id)))
+        if rc != 0:
+            raise RuntimeError("Failed to set active flight: {}".format(out))
+        print("[direct] Active flight set to {}".format(flight_id))
         remote_script = r"""
 from config import load_config
 from sync_cache import CacheManager
