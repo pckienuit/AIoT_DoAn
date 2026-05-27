@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from server.auth import create_access_token, get_current_user, get_optional_user, hash_password, verify_password
-from server.database import get_connection, row_to_dict
+from server.database import USE_MYSQL, get_connection, row_to_dict
 
 
 router = APIRouter(prefix="/api", tags=["core"])
@@ -100,6 +100,57 @@ def _execute(query: str, params: tuple[Any, ...]) -> int:
 
 def _generate_booking_code() -> str:
     return secrets.token_hex(4).upper()
+
+
+def _begin_booking_write(conn: Any) -> None:
+    if not USE_MYSQL:
+        conn.execute("BEGIN IMMEDIATE")
+
+
+def _parse_seat_numbers(seat_number: str | None) -> list[str]:
+    return [
+        seat.strip().upper()
+        for seat in str(seat_number or "").split(",")
+        if seat.strip()
+    ]
+
+
+def _normalize_seat_number(seat_number: str | None) -> str | None:
+    seats = _parse_seat_numbers(seat_number)
+    return ", ".join(seats) if seats else None
+
+
+def _find_taken_seats(
+    conn: Any,
+    flight_id: int,
+    requested_seats: list[str],
+    exclude_booking_id: int | None = None,
+) -> list[str]:
+    if not requested_seats:
+        return []
+
+    params: list[Any] = [flight_id]
+    exclude_clause = ""
+    if exclude_booking_id is not None:
+        exclude_clause = "AND id != ?"
+        params.append(exclude_booking_id)
+
+    existing = conn.execute(
+        f"""
+        SELECT seat_number FROM bookings
+        WHERE flight_id = ?
+          AND seat_number IS NOT NULL
+          AND status NOT IN ('cancelled', 'refunded')
+          {exclude_clause}
+        """,
+        tuple(params),
+    ).fetchall()
+    taken = {
+        seat
+        for row in existing
+        for seat in _parse_seat_numbers(row["seat_number"])
+    }
+    return sorted(taken.intersection(requested_seats))
 
 
 # ---------------------------------------------------------------------------
@@ -296,14 +347,18 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
         layout = {"rows": 30, "cols": 6, "aisle": 2, "extra_legroom_cols": [1, 6]}
 
     booked = _fetch_all(
-        "SELECT seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'",
+        """
+        SELECT seat_number FROM bookings
+        WHERE flight_id = ?
+          AND seat_number IS NOT NULL
+          AND status NOT IN ('cancelled', 'refunded')
+        """,
         (flight_id,),
     )
     booked_seats = {
-        seat.strip()
+        seat
         for row in booked
-        for seat in str(row["seat_number"]).split(",")
-        if seat.strip()
+        for seat in _parse_seat_numbers(row["seat_number"])
     }
 
     rows_count = layout.get("rows", 30)
@@ -348,11 +403,8 @@ def create_booking(
     user: Annotated[dict | None, Depends(get_optional_user)] = None,
 ) -> dict[str, Any]:
     flight = get_flight(payload.flight_id)
-    requested_seats = [
-        seat.strip().upper()
-        for seat in str(payload.seat_number or "").split(",")
-        if seat.strip()
-    ]
+    requested_seats = _parse_seat_numbers(payload.seat_number)
+    normalized_seat_number = _normalize_seat_number(payload.seat_number)
     seats_count = max(1, len(requested_seats))
 
     if flight["available_seats"] < seats_count:
@@ -363,6 +415,17 @@ def create_booking(
     total = payload.total_price or flight.get("price_per_person", 0)
 
     with get_connection() as conn:
+        _begin_booking_write(conn)
+
+        seat_capacity = conn.execute(
+            "SELECT available_seats FROM flights WHERE id = ?",
+            (payload.flight_id,),
+        ).fetchone()
+        if not seat_capacity:
+            raise HTTPException(status_code=404, detail="Flight not found")
+        if seat_capacity["available_seats"] < seats_count:
+            raise HTTPException(status_code=409, detail="No seats available on this flight")
+
         # If guest booking, map to user account if email and phone matches
         if not uid and payload.passenger_email and payload.passenger_phone:
             existing_user = conn.execute(
@@ -373,20 +436,7 @@ def create_booking(
                 uid = existing_user["id"]
 
         if requested_seats:
-            existing = conn.execute(
-                """
-                SELECT seat_number FROM bookings
-                WHERE flight_id = ? AND seat_number IS NOT NULL AND status != 'cancelled'
-                """,
-                (payload.flight_id,),
-            ).fetchall()
-            taken = {
-                seat.strip().upper()
-                for row in existing
-                for seat in str(row["seat_number"]).split(",")
-                if seat.strip()
-            }
-            conflict = sorted(taken.intersection(requested_seats))
+            conflict = _find_taken_seats(conn, payload.flight_id, requested_seats)
             if conflict:
                 raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
 
@@ -418,7 +468,7 @@ def create_booking(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'unpaid')
                 """,
                 (code, uid, payload.flight_id, passenger_id,
-                 payload.seat_number,
+                 normalized_seat_number,
                  payload.passenger_name, payload.passenger_email,
                  payload.passenger_phone, total),
             )
@@ -427,10 +477,12 @@ def create_booking(
             raise HTTPException(status_code=409, detail="Booking failed") from exc
 
         # Decrease available seats
-        conn.execute(
-            "UPDATE flights SET available_seats = available_seats - ? WHERE id = ?",
-            (seats_count, payload.flight_id),
+        updated = conn.execute(
+            "UPDATE flights SET available_seats = available_seats - ? WHERE id = ? AND available_seats >= ?",
+            (seats_count, payload.flight_id, seats_count),
         )
+        if updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="No seats available on this flight")
         conn.commit()
 
     return _get_booking_detail(booking_id)
@@ -558,30 +610,24 @@ def change_seat(
         raise HTTPException(status_code=409, detail="Cannot change seat in current booking state")
 
     # Check seat is free
-    requested_seats = [s.strip().upper() for s in payload.new_seat_number.split(",") if s.strip()]
+    requested_seats = _parse_seat_numbers(payload.new_seat_number)
     if not requested_seats:
         raise HTTPException(status_code=422, detail="Invalid seat number")
 
-    existing = _fetch_all(
-        "SELECT id, seat_number FROM bookings WHERE flight_id = ? AND seat_number IS NOT NULL AND id != ? AND status != 'cancelled'",
-        (row["flight_id"], booking_id),
-    )
-    taken = {
-        seat.strip().upper()
-        for r in existing
-        for seat in str(r["seat_number"]).split(",")
-        if seat.strip()
-    }
-    conflict = sorted(taken.intersection(requested_seats))
-    if conflict:
-        raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
-
     from datetime import datetime
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _execute(
-        "UPDATE bookings SET seat_number = ?, updated_at = ? WHERE id = ?",
-        (payload.new_seat_number.upper(), now, booking_id),
-    )
+    normalized_seat_number = ", ".join(requested_seats)
+
+    with get_connection() as conn:
+        _begin_booking_write(conn)
+        conflict = _find_taken_seats(conn, row["flight_id"], requested_seats, booking_id)
+        if conflict:
+            raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
+        conn.execute(
+            "UPDATE bookings SET seat_number = ?, updated_at = ? WHERE id = ?",
+            (normalized_seat_number, now, booking_id),
+        )
+        conn.commit()
     return _get_booking_detail(booking_id)
 
 

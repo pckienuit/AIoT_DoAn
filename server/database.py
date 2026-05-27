@@ -70,12 +70,20 @@ def _sqlite_row_factory(cursor, row):
     return out
 
 
+@contextmanager
 def _get_sqlite_conn():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = _sqlite_row_factory
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _execute_sqlite(conn, query: str, params: tuple[Any, ...] = ()):
@@ -106,6 +114,10 @@ def _get_mysql_conn():
     conn = pool.get_connection()
     try:
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -206,11 +218,20 @@ CREATE TABLE IF NOT EXISTS flights (
     FOREIGN KEY (schedule_id) REFERENCES schedules(id)
 );
 
+CREATE TABLE IF NOT EXISTS passengers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     booking_code TEXT NOT NULL UNIQUE,
     user_id INTEGER,
     flight_id INTEGER NOT NULL,
+    passenger_id INTEGER,
     seat_number TEXT,
     passenger_name TEXT NOT NULL,
     passenger_email TEXT,
@@ -224,6 +245,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (passenger_id) REFERENCES passengers(id),
     FOREIGN KEY (flight_id) REFERENCES flights(id)
 );
 
@@ -312,11 +334,20 @@ CREATE TABLE IF NOT EXISTS flights (
     INDEX idx_flight_date (flight_date)
 );
 
+CREATE TABLE IF NOT EXISTS passengers (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    phone VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     id INT PRIMARY KEY AUTO_INCREMENT,
     booking_code VARCHAR(20) NOT NULL UNIQUE,
     user_id INT,
     flight_id INT NOT NULL,
+    passenger_id INT,
     seat_number VARCHAR(4),
     passenger_name VARCHAR(255) NOT NULL,
     passenger_email VARCHAR(255),
@@ -330,6 +361,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (passenger_id) REFERENCES passengers(id),
     FOREIGN KEY (flight_id) REFERENCES flights(id),
     INDEX idx_booking_user (user_id),
     INDEX idx_booking_flight (flight_id),
@@ -349,6 +381,24 @@ CREATE TABLE IF NOT EXISTS payments (
     INDEX idx_payment_booking (booking_id)
 );
 """
+
+
+def _ensure_sqlite_booking_guards(conn) -> None:
+    try:
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_active_flight_seat_unique
+            ON bookings(flight_id, seat_number)
+            WHERE seat_number IS NOT NULL
+              AND trim(seat_number) != ''
+              AND status NOT IN ('cancelled', 'refunded')
+            """
+        )
+    except Exception as exc:
+        print(
+            "  [WARN] bookings active seat uniqueness not enabled; "
+            f"clean duplicate active seats first ({exc})"
+        )
 
 
 def init_db() -> None:
@@ -380,6 +430,7 @@ def init_db() -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with _get_sqlite_conn() as conn:
             conn.executescript(SQLITE_SCHEMA)
+            _ensure_sqlite_booking_guards(conn)
 
 
 def iter_tables() -> Iterator[str]:
