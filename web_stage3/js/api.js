@@ -77,6 +77,10 @@ async function apiGetAirports() {
   return apiRequest("/api/airports");
 }
 
+async function apiGetStats() {
+  return apiRequest("/api/stats");
+}
+
 // ---------------------------------------------------------------------------
 // Flights
 // ---------------------------------------------------------------------------
@@ -248,6 +252,7 @@ export {
   apiGetMe,
   apiUpdateMe,
   apiGetAirports,
+  apiGetStats,
   apiSearchFlights,
   apiGetFlight,
   apiGetFlightSeats,

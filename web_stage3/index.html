@@ -142,7 +142,7 @@
 
   <script type="module">
     import { render } from "./js/components/nav.js";
-    import { apiHealth, apiGetAirports, apiSearchFlights } from "./js/api.js";
+    import { apiHealth, apiGetAirports, apiGetStats, apiSearchFlights } from "./js/api.js";
     import { navigate } from "./js/router.js";
     import { registerRoutes } from "./js/routes.js";
     import { saveBookingFlow, clearStaleFlow } from "./js/storage.js";
@@ -292,10 +292,6 @@
       depInput.focus();
     });
 
-    // ── Init ────────────────────────────────────────────────────────────────
-    const airportsReady = loadAirports();
-    checkHealth();
-
     // Animate stat counters
     function animateCounter(el, target) {
       let current = 0;
@@ -306,13 +302,27 @@
         if (current >= target) clearInterval(iv);
       }, 30);
     }
-    // Set demo stats after a delay
-    setTimeout(() => {
-      animateCounter(document.getElementById("statFlights"), 127);
-      animateCounter(document.getElementById("statSeats"), 1842);
-      animateCounter(document.getElementById("statRoutes"), 24);
-      animateCounter(document.getElementById("statPassengers"), 96);
-    }, 600);
+
+    async function loadStats() {
+      try {
+        const stats = await apiGetStats();
+        animateCounter(document.getElementById("statFlights"), stats.flights_today || 0);
+        animateCounter(document.getElementById("statSeats"), stats.empty_seats || 0);
+        animateCounter(document.getElementById("statRoutes"), stats.routes || 0);
+        animateCounter(document.getElementById("statPassengers"), stats.passengers_checked_in || 0);
+      } catch (err) {
+        console.error("Failed to load real stats, using demo fallback:", err);
+        animateCounter(document.getElementById("statFlights"), 127);
+        animateCounter(document.getElementById("statSeats"), 1842);
+        animateCounter(document.getElementById("statRoutes"), 24);
+        animateCounter(document.getElementById("statPassengers"), 96);
+      }
+    }
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    const airportsReady = loadAirports();
+    checkHealth();
+    loadStats();
   </script>
 </body>
 </html>

@@ -272,6 +272,34 @@ def list_airports() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+@router.get("/stats")
+def get_stats() -> dict[str, Any]:
+    today = date.today().isoformat()
+    f_today = _fetch_one("SELECT COUNT(*) as count FROM flights WHERE flight_date = ?", (today,))
+    flights_today = f_today["count"] if f_today else 0
+
+    s_empty = _fetch_one("SELECT SUM(available_seats) as count FROM flights WHERE status IN ('scheduled', 'boarding')", ())
+    empty_seats = s_empty["count"] if s_empty and s_empty["count"] is not None else 0
+
+    r_count = _fetch_one("SELECT COUNT(*) as count FROM routes", ())
+    routes_count = r_count["count"] if r_count else 0
+
+    p_checked = _fetch_one("SELECT COUNT(*) as count FROM bookings WHERE status = 'checked_in'", ())
+    passengers_checked_in = p_checked["count"] if p_checked else 0
+
+    return {
+        "flights_today": flights_today,
+        "empty_seats": empty_seats,
+        "routes": routes_count,
+        "passengers_checked_in": passengers_checked_in,
+    }
+
+
+
+# ---------------------------------------------------------------------------
 # Flights
 # ---------------------------------------------------------------------------
 
