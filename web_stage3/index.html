@@ -241,8 +241,7 @@
     retInput.min   = today.toISOString().substring(0, 10);
 
     // ── Search form submit ───────────────────────────────────────────────────
-    document.getElementById("searchForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
+    function runSearch() {
       const origin      = originEl.value;
       const destination = destEl.value;
       const date       = depInput.value;
@@ -261,9 +260,25 @@
 
       const params = new URLSearchParams({ origin, destination, date, passengers });
       navigate(`/search?${params}`);
+    }
+
+    document.getElementById("searchForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      runSearch();
     });
 
     // ── Quick route chips ───────────────────────────────────────────────────
+    document.querySelectorAll("[data-quick]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        await airportsReady;
+        const codes = btn.textContent.match(/[A-Z]{3}/g);
+        if (!codes || codes.length < 2) return;
+        originEl.value = codes[0];
+        destEl.value = codes[1];
+        runSearch();
+      });
+    });
+
     quickEl.addEventListener("click", async (e) => {
       const chip = e.target.closest(".route-chip");
       if (!chip) return;
@@ -278,7 +293,7 @@
     });
 
     // ── Init ────────────────────────────────────────────────────────────────
-    loadAirports();
+    const airportsReady = loadAirports();
     checkHealth();
 
     // Animate stat counters
