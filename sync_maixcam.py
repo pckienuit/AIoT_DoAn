@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Trigger a manual cache sync on the MaixCAM device."""
 import argparse
+import json
+import sqlite3
 import sys
 import time
+import urllib.request
+from pathlib import Path
 
 import paramiko
 
@@ -11,6 +15,10 @@ DEVICE_HOST = "10.154.36.1"
 DEVICE_USER = "root"
 DEVICE_PASS = "root"
 DEVICE_PORT = 22
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_DB_PATH = PROJECT_ROOT / "server" / "data" / "prototype.db"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "MaixCAM_App" / "config.json"
+TEST_ALL_FLIGHT_ID = 999999
 
 
 def make_client(host: str, user: str, password: str, port: int) -> paramiko.SSHClient:
@@ -30,6 +38,97 @@ def ssh_run(client: paramiko.SSHClient, command: str) -> tuple[int, str]:
 
 def quote_shell(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def load_default_server_url() -> str:
+    if DEFAULT_CONFIG_PATH.exists():
+        with DEFAULT_CONFIG_PATH.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        return str(cfg.get("server_url", "http://127.0.0.1:8000")).rstrip("/")
+    return "http://127.0.0.1:8000"
+
+
+def discover_registered_flight_ids(db_path: Path) -> list[int]:
+    if not db_path.exists():
+        raise RuntimeError("Database not found: {}".format(db_path))
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT flight_id
+            FROM bookings
+            WHERE face_registered = 1
+               OR qdrant_point_id IS NOT NULL
+            ORDER BY flight_id
+            """
+        ).fetchall()
+
+    return [int(row[0]) for row in rows if row[0] is not None]
+
+
+def fetch_sync_payload(server_url: str, flight_id: int, timeout: int) -> dict:
+    url = "{}/api/sync/{}".format(server_url.rstrip("/"), int(flight_id))
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def upload_test_cache(
+    client: paramiko.SSHClient,
+    test_flight_id: int,
+    items: list[dict],
+) -> None:
+    cache_entry = {
+        "flight_id": int(test_flight_id),
+        "synced_at": time.time(),
+        "count": len(items),
+        "items": items,
+        "test_all_faces": True,
+    }
+
+    sftp = client.open_sftp()
+    try:
+        try:
+            sftp.mkdir("/root/cache")
+        except OSError:
+            pass
+
+        remote_path = "/root/cache/flight_{}.json".format(int(test_flight_id))
+        with sftp.file(remote_path, "w") as remote_file:
+            remote_file.write(json.dumps(cache_entry))
+    finally:
+        sftp.close()
+
+
+def sync_all_faces_to_test_cache(
+    client: paramiko.SSHClient,
+    server_url: str,
+    db_path: Path,
+    test_flight_id: int,
+    timeout: int,
+) -> None:
+    flight_ids = discover_registered_flight_ids(db_path)
+    if not flight_ids:
+        raise RuntimeError("No registered face flights found in {}".format(db_path))
+
+    print("[all] Registered face flight IDs:", flight_ids)
+    all_items = []
+    for flight_id in flight_ids:
+        print("[all] Fetching flight {} from server...".format(flight_id))
+        payload = fetch_sync_payload(server_url, flight_id, timeout)
+        items = payload.get("items", [])
+        print("[all]   {} embeddings".format(len(items)))
+        all_items.extend(items)
+
+    upload_test_cache(client, test_flight_id, all_items)
+    rc, out = ssh_run(client, "echo {} > /root/active_flight.txt".format(int(test_flight_id)))
+    if rc != 0:
+        raise RuntimeError(out or "Failed to set test active flight")
+
+    print("[all] Uploaded {} embeddings to /root/cache/flight_{}.json".format(
+        len(all_items),
+        int(test_flight_id),
+    ))
+    print("[all] Active flight set to test cache {}".format(int(test_flight_id)))
 
 
 def trigger_flag_sync(client: paramiko.SSHClient, flight_id: int | None, wait_sec: int) -> None:
@@ -114,6 +213,34 @@ def main() -> int:
     parser.add_argument("--flight", type=int, help="Set active flight before syncing")
     parser.add_argument("--wait", type=int, default=3, help="Seconds to wait after flag sync")
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Sync every registered face into one test cache on the edge",
+    )
+    parser.add_argument(
+        "--test-flight",
+        type=int,
+        default=TEST_ALL_FLIGHT_ID,
+        help="Synthetic active flight ID used by --all",
+    )
+    parser.add_argument(
+        "--server-url",
+        default=load_default_server_url(),
+        help="FastAPI server URL used by --all",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="SQLite DB used by --all to discover registered faces",
+    )
+    parser.add_argument(
+        "--api-timeout",
+        type=int,
+        default=10,
+        help="HTTP timeout for --all server requests",
+    )
+    parser.add_argument(
         "--direct",
         action="store_true",
         help="Run sync immediately over SSH instead of waiting for the running app",
@@ -128,11 +255,21 @@ def main() -> int:
         return 1
 
     try:
-        if args.direct:
+        if args.all:
+            sync_all_faces_to_test_cache(
+                client,
+                args.server_url,
+                args.db,
+                args.test_flight,
+                args.api_timeout,
+            )
+            print_status(client, args.test_flight)
+        elif args.direct:
             run_direct_sync(client, args.flight)
+            print_status(client, args.flight)
         else:
             trigger_flag_sync(client, args.flight, args.wait)
-        print_status(client, args.flight)
+            print_status(client, args.flight)
     except Exception as exc:
         print("Sync trigger failed:", exc)
         return 1
