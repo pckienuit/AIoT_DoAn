@@ -771,7 +771,8 @@
             <td class="mono">${f.id}</td>
             <td class="mono" style="font-weight:700;">${f.flight_number}</td>
             <td><span class="route-code">${f.origin_code}</span> <span class="route-arrow">→</span> <span class="route-code">${f.dest_code}</span><br><span style="font-size:var(--text-xs);color:var(--muted);">${f.origin_city} → ${f.dest_city}</span></td>
-            <td>${formatDate(f.flight_date)}<br><span style="font-size:var(--text-xs);color:var(--muted);">${formatTime(f.departure_time)}</span></td>
+            <td>${formatDate(f.flight_date)}</td>
+            <td class="mono">${formatTime(f.departure_time)}</td>
             <td>${flightStatusBadge(f.status)}</td>
             <td class="mono">${f.booking_count} <span style="color:var(--muted);">/${f.total_seats}</span></td>
             <td class="mono">${f.available_seats}</td>
