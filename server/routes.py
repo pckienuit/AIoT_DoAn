@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
@@ -54,10 +55,17 @@ class BookingCreate(BaseModel):
     passenger_phone: str | None = None
     seat_number: str | None = None
     total_price: float | None = None
+    hold_token: str | None = None
 
 
 class SeatChangeRequest(BaseModel):
-    new_seat_number: str = Field(min_length=1, max_length=4)
+    new_seat_number: str = Field(min_length=1, max_length=64)
+
+
+class SeatHoldRequest(BaseModel):
+    flight_id: int
+    seat_number: str = Field(min_length=1, max_length=64)
+    hold_token: str | None = None
 
 
 class PaymentInit(BaseModel):
@@ -102,6 +110,21 @@ def _generate_booking_code() -> str:
     return secrets.token_hex(4).upper()
 
 
+HOLD_SECONDS = 10 * 60
+
+
+def _utc_now() -> datetime:
+    return datetime.utcnow().replace(microsecond=0)
+
+
+def _format_hold_time(value: datetime) -> str:
+    return value.isoformat() + "Z"
+
+
+def _cleanup_expired_holds(conn: Any) -> None:
+    conn.execute("DELETE FROM seat_holds WHERE expires_at <= ?", (_format_hold_time(_utc_now()),))
+
+
 def _begin_booking_write(conn: Any) -> None:
     if not USE_MYSQL:
         conn.execute("BEGIN IMMEDIATE")
@@ -125,6 +148,7 @@ def _find_taken_seats(
     flight_id: int,
     requested_seats: list[str],
     exclude_booking_id: int | None = None,
+    allowed_hold_token: str | None = None,
 ) -> list[str]:
     if not requested_seats:
         return []
@@ -150,6 +174,26 @@ def _find_taken_seats(
         for row in existing
         for seat in _parse_seat_numbers(row["seat_number"])
     }
+
+    hold_params: list[Any] = [flight_id, _format_hold_time(_utc_now())]
+    hold_clause = ""
+    if allowed_hold_token:
+        hold_clause = "AND hold_token != ?"
+        hold_params.append(allowed_hold_token)
+    active_holds = conn.execute(
+        f"""
+        SELECT seat_number FROM seat_holds
+        WHERE flight_id = ?
+          AND expires_at > ?
+          {hold_clause}
+        """,
+        tuple(hold_params),
+    ).fetchall()
+    taken.update(
+        seat
+        for row in active_holds
+        for seat in _parse_seat_numbers(row["seat_number"])
+    )
     return sorted(taken.intersection(requested_seats))
 
 
@@ -346,20 +390,37 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
     else:
         layout = {"rows": 30, "cols": 6, "aisle": 2, "extra_legroom_cols": [1, 6]}
 
-    booked = _fetch_all(
-        """
-        SELECT seat_number FROM bookings
-        WHERE flight_id = ?
-          AND seat_number IS NOT NULL
-          AND status NOT IN ('cancelled', 'refunded')
-        """,
-        (flight_id,),
-    )
+    with get_connection() as conn:
+        _cleanup_expired_holds(conn)
+        booked = conn.execute(
+            """
+            SELECT seat_number FROM bookings
+            WHERE flight_id = ?
+              AND seat_number IS NOT NULL
+              AND status NOT IN ('cancelled', 'refunded')
+            """,
+            (flight_id,),
+        ).fetchall()
+        held = conn.execute(
+            """
+            SELECT seat_number FROM seat_holds
+            WHERE flight_id = ?
+              AND expires_at > ?
+            """,
+            (flight_id, _format_hold_time(_utc_now())),
+        ).fetchall()
+
     booked_seats = {
         seat
         for row in booked
         for seat in _parse_seat_numbers(row["seat_number"])
     }
+    held_seats = {
+        seat
+        for row in held
+        for seat in _parse_seat_numbers(row["seat_number"])
+    }
+    unavailable_seats = booked_seats | held_seats
 
     rows_count = layout.get("rows", 30)
     cols_count = layout.get("cols", 6)
@@ -371,7 +432,7 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
         row_label = str(r)
         for c in range(1, cols_count + 1):
             seat_label = f"{row_label}{chr(64 + c)}"
-            status = "booked" if seat_label in booked_seats else "available"
+            status = "booked" if seat_label in unavailable_seats else "available"
             extra = c in extra_cols
             surcharge = 150000 if extra else 0
             seats.append({
@@ -389,8 +450,61 @@ def get_flight_seats(flight_id: int) -> dict[str, Any]:
         "layout": layout,
         "seats": seats,
         "booked_count": len(booked_seats),
-        "available_count": len(seats) - len(booked_seats),
+        "held_count": len(held_seats - booked_seats),
+        "available_count": len(seats) - len(unavailable_seats),
     }
+
+
+# ---------------------------------------------------------------------------
+# Seat holds
+# ---------------------------------------------------------------------------
+
+@router.post("/seat-holds", status_code=201)
+def hold_seats(payload: SeatHoldRequest) -> dict[str, Any]:
+    get_flight(payload.flight_id)
+    requested_seats = _parse_seat_numbers(payload.seat_number)
+    normalized_seat_number = _normalize_seat_number(payload.seat_number)
+    if not requested_seats or not normalized_seat_number:
+        raise HTTPException(status_code=422, detail="Invalid seat number")
+
+    hold_token = payload.hold_token or uuid.uuid4().hex
+    expires_at = _format_hold_time(_utc_now() + timedelta(seconds=HOLD_SECONDS))
+
+    with get_connection() as conn:
+        _begin_booking_write(conn)
+        _cleanup_expired_holds(conn)
+        _cleanup_expired_holds(conn)
+        conn.execute("DELETE FROM seat_holds WHERE hold_token = ?", (hold_token,))
+
+        conflict = _find_taken_seats(conn, payload.flight_id, requested_seats)
+        if conflict:
+            raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
+
+        conn.execute(
+            """
+            INSERT INTO seat_holds (hold_token, flight_id, seat_number, expires_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (hold_token, payload.flight_id, normalized_seat_number, expires_at),
+        )
+        conn.commit()
+
+    return {
+        "hold_token": hold_token,
+        "flight_id": payload.flight_id,
+        "seat_number": normalized_seat_number,
+        "expires_at": expires_at,
+        "ttl_seconds": HOLD_SECONDS,
+    }
+
+
+@router.delete("/seat-holds/{hold_token}")
+def release_seat_hold(hold_token: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        _begin_booking_write(conn)
+        cur = conn.execute("DELETE FROM seat_holds WHERE hold_token = ?", (hold_token,))
+        conn.commit()
+    return {"released": cur.rowcount > 0}
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +550,12 @@ def create_booking(
                 uid = existing_user["id"]
 
         if requested_seats:
-            conflict = _find_taken_seats(conn, payload.flight_id, requested_seats)
+            conflict = _find_taken_seats(
+                conn,
+                payload.flight_id,
+                requested_seats,
+                allowed_hold_token=payload.hold_token,
+            )
             if conflict:
                 raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")
 
@@ -483,6 +602,8 @@ def create_booking(
         )
         if updated.rowcount != 1:
             raise HTTPException(status_code=409, detail="No seats available on this flight")
+        if payload.hold_token:
+            conn.execute("DELETE FROM seat_holds WHERE hold_token = ?", (payload.hold_token,))
         conn.commit()
 
     return _get_booking_detail(booking_id)
@@ -620,6 +741,7 @@ def change_seat(
 
     with get_connection() as conn:
         _begin_booking_write(conn)
+        _cleanup_expired_holds(conn)
         conflict = _find_taken_seats(conn, row["flight_id"], requested_seats, booking_id)
         if conflict:
             raise HTTPException(status_code=409, detail=f"Seat already taken: {', '.join(conflict)}")

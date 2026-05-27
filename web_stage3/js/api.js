@@ -99,6 +99,20 @@ async function apiGetFlightSeats(id) {
   return apiRequest(`/api/flights/${id}/seats`);
 }
 
+async function apiHoldSeats(payload) {
+  return apiRequest("/api/seat-holds", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function apiReleaseSeatHold(holdToken, options = {}) {
+  return apiRequest(`/api/seat-holds/${encodeURIComponent(holdToken)}`, {
+    method: "DELETE",
+    ...options,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Bookings
 // ---------------------------------------------------------------------------
@@ -237,6 +251,8 @@ export {
   apiSearchFlights,
   apiGetFlight,
   apiGetFlightSeats,
+  apiHoldSeats,
+  apiReleaseSeatHold,
   apiCreateBooking,
   apiGetMyBookings,
   apiGetBooking,

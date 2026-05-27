@@ -249,6 +249,16 @@ CREATE TABLE IF NOT EXISTS bookings (
     FOREIGN KEY (flight_id) REFERENCES flights(id)
 );
 
+CREATE TABLE IF NOT EXISTS seat_holds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hold_token TEXT NOT NULL,
+    flight_id INTEGER NOT NULL,
+    seat_number TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (flight_id) REFERENCES flights(id)
+);
+
 CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     booking_id INTEGER NOT NULL,
@@ -264,6 +274,8 @@ CREATE INDEX IF NOT EXISTS idx_bookings_user_id ON bookings(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_flight_id ON bookings(flight_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_bookings_code ON bookings(booking_code);
+CREATE INDEX IF NOT EXISTS idx_seat_holds_token ON seat_holds(hold_token);
+CREATE INDEX IF NOT EXISTS idx_seat_holds_flight_expires ON seat_holds(flight_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_flights_date ON flights(flight_date);
 CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments(booking_id);
 """
@@ -367,6 +379,18 @@ CREATE TABLE IF NOT EXISTS bookings (
     INDEX idx_booking_flight (flight_id),
     INDEX idx_booking_status (status),
     INDEX idx_booking_code (booking_code)
+);
+
+CREATE TABLE IF NOT EXISTS seat_holds (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    hold_token VARCHAR(64) NOT NULL,
+    flight_id INT NOT NULL,
+    seat_number VARCHAR(255) NOT NULL,
+    expires_at VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (flight_id) REFERENCES flights(id),
+    INDEX idx_seat_holds_token (hold_token),
+    INDEX idx_seat_holds_flight_expires (flight_id, expires_at)
 );
 
 CREATE TABLE IF NOT EXISTS payments (

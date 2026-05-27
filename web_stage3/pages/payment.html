@@ -43,6 +43,7 @@
             </div>
             <div class="panel__body">
               <div id="paymentError" style="display:none;margin-bottom:var(--sp-4);"></div>
+              <div id="paymentHoldTimer" class="alert alert--info" style="display:none;margin-bottom:var(--sp-4);"></div>
 
               <!-- Passenger Contact Form (Conditional) -->
               <div id="passengerFormContainer" style="display:none; margin-bottom:var(--sp-5);">
@@ -166,7 +167,7 @@
 
   <script type="module">
     import { render } from "../js/components/nav.js";
-    import { apiGetBooking, apiInitPayment, apiPaymentCallback, apiCreateBooking } from "../js/api.js";
+    import { apiGetBooking, apiInitPayment, apiPaymentCallback, apiCreateBooking, apiReleaseSeatHold } from "../js/api.js";
     import { navigate } from "../js/router.js";
     import { registerRoutes } from "../js/routes.js";
     import { getBookingFlow, clearBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
@@ -186,6 +187,10 @@
 
     let booking = null;
     let selectedMethod = null;
+    let holdTimerId = null;
+    let bookingCreated = false;
+    let paymentOptionsBound = false;
+    let paymentSubmitting = false;
 
     async function loadBooking() {
       try {
@@ -233,6 +238,7 @@
         }
 
         renderSummary();
+        startPaymentHoldTimer();
 
         const nameInput = document.getElementById("passengerName");
         if (nameInput) {
@@ -245,6 +251,39 @@
       } else {
         await loadBooking();
       }
+    }
+
+    function formatRemaining(ms) {
+      const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    function startPaymentHoldTimer() {
+      if (!flow.holdToken || !flow.holdExpiresAt || bookingCode) return;
+      const timerEl = document.getElementById("paymentHoldTimer");
+      const payBtn = document.getElementById("payNowBtn");
+      timerEl.style.display = "block";
+
+      const tick = () => {
+        const remaining = new Date(flow.holdExpiresAt).getTime() - Date.now();
+        if (remaining <= 0) {
+          clearInterval(holdTimerId);
+          holdTimerId = null;
+          timerEl.className = "alert alert--error";
+          timerEl.textContent = "Hết thời gian giữ ghế. Vui lòng quay lại chọn ghế.";
+          payBtn.disabled = true;
+          apiReleaseSeatHold(flow.holdToken, { keepalive: true }).catch(() => {});
+          saveBookingFlow({ holdToken: null, holdExpiresAt: null, seatNumbers: [], seatNumber: null });
+          return;
+        }
+        timerEl.className = "alert alert--info";
+        timerEl.textContent = `Ghế đang được giữ cho bạn. Còn ${formatRemaining(remaining)} để hoàn tất thanh toán.`;
+      };
+
+      tick();
+      holdTimerId = setInterval(tick, 1000);
     }
 
     function renderSummary() {
@@ -307,6 +346,9 @@
     }
 
     function setupPaymentOptions() {
+      if (paymentOptionsBound) return;
+      paymentOptionsBound = true;
+
       const radios = document.querySelectorAll('input[name="method"]');
       const payBtn = document.getElementById("payNowBtn");
 
@@ -326,6 +368,8 @@
 
       payBtn.addEventListener("click", async () => {
         if (!selectedMethod || !booking) return;
+        if (paymentSubmitting) return;
+        paymentSubmitting = true;
 
         payBtn.disabled = true;
         payBtn.innerHTML = `<span class="spinner"></span> Đang xử lý…`;
@@ -359,13 +403,19 @@
               passenger_phone: phone,
               seat_number: flow.seatNumber,
               total_price: flow.totalPrice,
+              hold_token: flow.holdToken,
             });
+            bookingCreated = true;
+            clearInterval(holdTimerId);
+            document.getElementById("paymentHoldTimer").style.display = "none";
 
             // Update local flow state
             saveBookingFlow({
               ...flow,
               bookingCode: newBooking.booking_code,
-              booking: newBooking
+              booking: newBooking,
+              holdToken: null,
+              holdExpiresAt: null
             });
             booking = newBooking;
           }
@@ -399,9 +449,16 @@
           document.getElementById("paymentError").style.display = "block";
           payBtn.disabled = false;
           payBtn.textContent = "Thử lại";
+          paymentSubmitting = false;
         }
       });
     }
+
+    window.addEventListener("pagehide", () => {
+      if (!bookingCreated && !bookingCode && flow.holdToken) {
+        apiReleaseSeatHold(flow.holdToken, { keepalive: true }).catch(() => {});
+      }
+    });
 
     init();
   </script>

@@ -61,6 +61,11 @@
                 <span class="seat-summary__label">Ghế đã chọn</span>
                 <span class="seat-summary__value text-signal" id="summarySeat">—</span>
               </div>
+              <div class="seat-summary__item seat-summary__hold" id="holdTimerRow" style="display:none;">
+                <span class="seat-summary__label">Thời gian giữ ghế</span>
+                <span class="seat-summary__value text-signal" id="holdTimer">10:00</span>
+              </div>
+              <div id="holdStatus" class="alert alert--info" style="display:none;margin-top:var(--sp-3);"></div>
               <div class="seat-summary__item">
                 <span class="seat-summary__label">Phụ thu ghế</span>
                 <span class="seat-summary__value" id="summarySurcharge">—</span>
@@ -92,7 +97,7 @@
 
   <script type="module">
     import { render } from "../js/components/nav.js";
-    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats, apiChangeSeat } from "../js/api.js";
+    import { apiCreateBooking, apiGetFlight, apiGetFlightSeats, apiChangeSeat, apiHoldSeats, apiReleaseSeatHold } from "../js/api.js";
     import { createSeatPicker } from "../js/components/seat-picker.js";
     import { navigate } from "../js/router.js";
     import { getBookingFlow, saveBookingFlow, clearStaleFlow } from "../js/storage.js";
@@ -133,6 +138,11 @@
       ? [...flow.seatNumbers]
       : (flow.seatNumber ? [flow.seatNumber] : []);
     let extraSurcharge = 0;
+    let picker = null;
+    let holdToken = flow.holdToken || null;
+    let holdExpiresAt = flow.holdExpiresAt || null;
+    let holdTimerId = null;
+    let navigatingInsideFlow = false;
 
     async function init() {
       const mapEl = document.getElementById("seatMapContainer");
@@ -166,25 +176,136 @@
       document.getElementById("summaryPassenger").textContent = flow.passengerName || flow.passengers + " khách";
       updateSummary();
 
-      const picker = createSeatPicker({
+      picker = createSeatPicker({
         container: mapEl,
         seats,
         selectedSeats,
-        onSelect: (sel) => {
-          selectedSeats = sel;
-          saveBookingFlow({ ...flow, seatNumbers: selectedSeats, seatNumber: selectedSeats.join(", ") });
-          updateSummary();
-          document.getElementById("confirmSeatBtn").disabled = sel.length === 0;
+        onSelect: async (sel) => {
+          await handleSeatSelection(sel);
         },
       });
       picker.mount(mapEl);
-      document.getElementById("confirmSeatBtn").disabled = selectedSeats.length === 0;
+      if (selectedSeats.length && holdToken && holdExpiresAt && new Date(holdExpiresAt).getTime() > Date.now()) {
+        startHoldTimer(holdExpiresAt);
+        setHoldStatus("Ghế đang được giữ cho bạn.", "info");
+        document.getElementById("confirmSeatBtn").disabled = false;
+      } else if (selectedSeats.length) {
+        await handleSeatSelection(selectedSeats);
+      } else {
+        document.getElementById("confirmSeatBtn").disabled = true;
+      }
     }
 
     function showSeatMapError(message) {
       document.getElementById("flightInfo").textContent = "Không thể tải sơ đồ ghế";
       document.getElementById("seatMapContainer").innerHTML =
         `<div class="alert alert--error"><strong>Lỗi:</strong> ${message}</div>`;
+    }
+
+    function setHoldStatus(message, type = "info") {
+      const el = document.getElementById("holdStatus");
+      if (!el) return;
+      if (!message) {
+        el.style.display = "none";
+        el.textContent = "";
+        return;
+      }
+      el.className = `alert alert--${type}`;
+      el.textContent = message;
+      el.style.display = "block";
+    }
+
+    function formatRemaining(ms) {
+      const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    function startHoldTimer(expiresAt) {
+      clearInterval(holdTimerId);
+      const row = document.getElementById("holdTimerRow");
+      const timer = document.getElementById("holdTimer");
+      row.style.display = "flex";
+
+      const tick = () => {
+        const remaining = new Date(expiresAt).getTime() - Date.now();
+        timer.textContent = formatRemaining(remaining);
+        if (remaining <= 0) {
+          clearInterval(holdTimerId);
+          holdTimerId = null;
+          holdToken = null;
+          holdExpiresAt = null;
+          selectedSeats = [];
+          saveBookingFlow({ holdToken: null, holdExpiresAt: null, seatNumbers: [], seatNumber: null });
+          if (picker) picker.setSelected([]);
+          row.style.display = "none";
+          document.getElementById("confirmSeatBtn").disabled = true;
+          setHoldStatus("Hết thời gian giữ ghế. Vui lòng chọn lại ghế.", "error");
+          updateSummary();
+          init();
+        }
+      };
+
+      tick();
+      holdTimerId = setInterval(tick, 1000);
+    }
+
+    async function releaseCurrentHold() {
+      if (!holdToken) return;
+      const token = holdToken;
+      holdToken = null;
+      holdExpiresAt = null;
+      clearInterval(holdTimerId);
+      holdTimerId = null;
+      document.getElementById("holdTimerRow").style.display = "none";
+      saveBookingFlow({ holdToken: null, holdExpiresAt: null });
+      try {
+        await apiReleaseSeatHold(token, { keepalive: true });
+      } catch { /* release is best-effort */ }
+    }
+
+    async function handleSeatSelection(sel) {
+      selectedSeats = sel;
+      updateSummary();
+      document.getElementById("confirmSeatBtn").disabled = true;
+
+      if (!selectedSeats.length) {
+        await releaseCurrentHold();
+        saveBookingFlow({ seatNumbers: [], seatNumber: null });
+        setHoldStatus("", "info");
+        return;
+      }
+
+      setHoldStatus("Đang giữ ghế...", "info");
+      try {
+        const hold = await apiHoldSeats({
+          flight_id: Number(flightId),
+          seat_number: selectedSeats.join(", "),
+          hold_token: holdToken,
+        });
+        holdToken = hold.hold_token;
+        holdExpiresAt = hold.expires_at;
+        saveBookingFlow({
+          ...getBookingFlow(),
+          seatNumbers: selectedSeats,
+          seatNumber: selectedSeats.join(", "),
+          holdToken,
+          holdExpiresAt,
+        });
+        startHoldTimer(holdExpiresAt);
+        setHoldStatus("Ghế đang được giữ cho bạn trong 10 phút.", "ok");
+        document.getElementById("confirmSeatBtn").disabled = false;
+      } catch (err) {
+        await releaseCurrentHold();
+        selectedSeats = [];
+        if (picker) picker.setSelected([]);
+        saveBookingFlow({ seatNumbers: [], seatNumber: null });
+        document.getElementById("confirmSeatBtn").disabled = true;
+        setHoldStatus(`${err.message}`);
+        updateSummary();
+        init();
+      }
     }
 
     function updateSummary() {
@@ -235,13 +356,16 @@
           navigate(`/payment?booking=${bookingCode}`);
         } else {
           // New booking flow: just save to storage and navigate to payment
+          navigatingInsideFlow = true;
           saveBookingFlow({
             ...flow,
             seatNumber,
             seatNumbers: selectedSeats,
             passengers: ticketCount,
             extraSurcharge,
-            totalPrice
+            totalPrice,
+            holdToken,
+            holdExpiresAt
           });
           navigate("/payment");
         }
@@ -249,6 +373,12 @@
         btn.disabled = false;
         btn.textContent = "Xác nhận ghế & thanh toán";
         showSeatMapError(`Lỗi xử lý ghế: ${err.message}`);
+      }
+    });
+
+    window.addEventListener("pagehide", () => {
+      if (!navigatingInsideFlow && holdToken) {
+        apiReleaseSeatHold(holdToken, { keepalive: true }).catch(() => {});
       }
     });
 
