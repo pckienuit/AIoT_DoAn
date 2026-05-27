@@ -80,6 +80,15 @@ def _cleanup_flight_cache(client, flight_id: int) -> dict[str, Any]:
             result["cache_deleted"] = False  # already gone, that's fine
         finally:
             sftp.close()
+
+        # Check if this flight was the active flight. If so, clear it.
+        try:
+            rc, out = _ssh_run(client, "cat /root/active_flight.txt 2>/dev/null || echo ''")
+            if rc == 0 and out.strip() == str(flight_id):
+                _ssh_run(client, "rm -f /root/active_flight.txt")
+        except Exception:
+            pass
+
         result["device_reachable"] = True
     except Exception as exc:
         result["error"] = str(exc)
@@ -578,7 +587,23 @@ def trigger_sync(payload: SyncTriggerRequest) -> dict[str, Any]:
                         pt_id = str(rec.id)
                         # Skip if booking was cancelled/refunded or face deleted
                         bk = _fetch_one(
-                            "SELECT * FROM bookings WHERE qdrant_point_id = ? AND status NOT IN ('cancelled','refunded') AND face_registered = 1",
+                            """
+                            SELECT
+                                b.*,
+                                fl.flight_number, fl.flight_date, fl.status AS flight_status,
+                                s.departure_time, s.arrival_time,
+                                a_o.city AS origin_city,
+                                a_d.city AS dest_city
+                            FROM bookings b
+                            JOIN flights fl ON fl.id = b.flight_id
+                            JOIN schedules s ON s.id = fl.schedule_id
+                            JOIN routes r ON r.id = s.route_id
+                            JOIN airports a_o ON a_o.id = r.origin_id
+                            JOIN airports a_d ON a_d.id = r.destination_id
+                            WHERE b.qdrant_point_id = ?
+                              AND b.status NOT IN ('cancelled', 'refunded')
+                              AND b.face_registered = 1
+                            """,
                             (pt_id,),
                         )
                         if not bk:
@@ -658,7 +683,23 @@ def trigger_sync(payload: SyncTriggerRequest) -> dict[str, Any]:
                 pt_id = str(rec.id)
                 # Skip cancelled/refunded bookings or ones with deleted face registrations
                 bk = _fetch_one(
-                    "SELECT * FROM bookings WHERE qdrant_point_id = ? AND status NOT IN ('cancelled','refunded') AND face_registered = 1",
+                    """
+                    SELECT
+                        b.*,
+                        fl.flight_number, fl.flight_date, fl.status AS flight_status,
+                        s.departure_time, s.arrival_time,
+                        a_o.city AS origin_city,
+                        a_d.city AS dest_city
+                    FROM bookings b
+                    JOIN flights fl ON fl.id = b.flight_id
+                    JOIN schedules s ON s.id = fl.schedule_id
+                    JOIN routes r ON r.id = s.route_id
+                    JOIN airports a_o ON a_o.id = r.origin_id
+                    JOIN airports a_d ON a_d.id = r.destination_id
+                    WHERE b.qdrant_point_id = ?
+                      AND b.status NOT IN ('cancelled', 'refunded')
+                      AND b.face_registered = 1
+                    """,
                     (pt_id,),
                 )
                 if not bk:

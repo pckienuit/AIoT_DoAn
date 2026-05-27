@@ -397,12 +397,14 @@ class CacheManager:
             print("[cache] Write failed:", e)
 
     def _read_cache(self, flight_id: int) -> dict | None:
-        if flight_id in self._ram_cache:
-            return self._ram_cache[flight_id]
-
         path = self._cache_path(flight_id)
         if not os.path.exists(path):
+            if flight_id in self._ram_cache:
+                del self._ram_cache[flight_id]
             return None
+
+        if flight_id in self._ram_cache:
+            return self._ram_cache[flight_id]
         try:
             with open(path, "r") as f:
                 data = json.load(f)
