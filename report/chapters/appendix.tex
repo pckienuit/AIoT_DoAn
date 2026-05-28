@@ -1,0 +1,50 @@
+\section{Phụ lục}
+
+\subsection{Các lệnh chạy hệ thống}
+\begin{lstlisting}[language=bash]
+docker compose up -d
+uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+\end{lstlisting}
+
+\subsection{Các endpoint quan trọng}
+\begin{longtable}{p{0.18\textwidth}p{0.34\textwidth}p{0.38\textwidth}}
+\toprule
+\textbf{Method} & \textbf{Endpoint} & \textbf{Mô tả} \\
+\midrule
+GET & /health & Kiểm tra server và database \\
+POST & /health/vector & Kiểm tra/tạo collection Qdrant \\
+GET & /api/flights/search & Tìm chuyến bay \\
+POST & /api/bookings & Tạo booking \\
+POST & /api/face/register & Đăng ký vector khuôn mặt \\
+POST & /api/face/match & Đối sánh khuôn mặt \\
+GET & /api/sync/\{flight\_id\} & Đồng bộ cache cho MaixCAM \\
+\bottomrule
+\end{longtable}
+
+\subsection{Danh sách hình ảnh cần bổ sung}
+\begin{itemize}
+  \item Ảnh giao diện trang tìm chuyến bay.
+  \item Ảnh giao diện chọn ghế.
+  \item Ảnh giao diện đăng ký khuôn mặt.
+  \item Ảnh dashboard admin.
+  \item Ảnh thiết bị MaixCAM đang chạy demo.
+  \item Sơ đồ pipeline nhận diện chi tiết.
+\end{itemize}
+
+\subsection{Gợi ý phân công báo cáo}
+\begin{table}[H]
+  \centering
+  \caption{Gợi ý phân công nội dung}
+  \begin{tabularx}{\textwidth}{lX}
+    \toprule
+    \textbf{Thành viên} & \textbf{Nội dung phụ trách} \\
+    \midrule
+    TODO & Giới thiệu, yêu cầu, cơ sở lý thuyết \\
+    TODO & Web client và luồng nghiệp vụ \\
+    TODO & Backend, database, Qdrant và API \\
+    TODO & MaixCAM edge, pipeline AI và benchmark \\
+    TODO & Bảo mật, kiểm thử, kết luận và slide/demo \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+

@@ -1,0 +1,64 @@
+\section{Kiến trúc hệ thống}
+
+\subsection{Tổng quan}
+Hệ thống được chia thành ba khối chính:
+
+\begin{itemize}
+  \item \textbf{Web Client}: phục vụ đặt vé, chọn ghế, thanh toán mô phỏng, đăng ký khuôn mặt và tra cứu vé.
+  \item \textbf{Server}: cung cấp REST API, quản lý dữ liệu nghiệp vụ, lưu vector khuôn mặt và điều phối đồng bộ.
+  \item \textbf{MaixCAM Edge}: nhận ảnh camera, trích xuất embedding, đối sánh cache cục bộ và hiển thị kết quả.
+\end{itemize}
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    node distance=1.3cm,
+    block/.style={draw, rounded corners, align=center, minimum width=3.7cm, minimum height=1.1cm},
+    arrow/.style={-{Latex}, thick}
+  ]
+    \node[block] (web) {Web Client\\Booking + Face Register};
+    \node[block, right=1.4cm of web] (server) {FastAPI Server\\SQLite/MySQL + Qdrant};
+    \node[block, right=1.4cm of server] (edge) {MaixCAM Edge\\Camera + Local Cache};
+
+    \draw[arrow] (web) -- node[above]{HTTPS API} (server);
+    \draw[arrow] (server) -- node[above]{Sync cache} (edge);
+    \draw[arrow, bend left=18] (edge) to node[below]{Fallback match} (server);
+  \end{tikzpicture}
+  \caption{Kiến trúc tổng quan của hệ thống}
+  \label{fig:system-overview}
+\end{figure}
+
+\subsection{Luồng đăng ký khuôn mặt}
+\begin{enumerate}
+  \item Người dùng đặt vé và chọn đăng ký khuôn mặt.
+  \item Web client thu thập ảnh hoặc video, kiểm tra chất lượng và tạo embedding.
+  \item Vector được gửi tới API \texttt{/api/face/register}.
+  \item Server gắn vector với booking và lưu vào Qdrant.
+\end{enumerate}
+
+\subsection{Luồng nhận diện tại MaixCAM}
+\begin{enumerate}
+  \item MaixCAM gọi \texttt{/api/sync/\{flight\_id\}} để tải cache hành khách của chuyến bay.
+  \item Server mã hóa vector trước khi trả về thiết bị.
+  \item Thiết bị lưu cache mã hóa và chỉ giải mã vào RAM khi đối sánh.
+  \item Khi có khuôn mặt trước camera, MaixCAM trích xuất embedding và tính khoảng cách cosine với cache.
+  \item Nếu match, thiết bị hiển thị thông tin vé; nếu không match, có thể gọi API fallback.
+\end{enumerate}
+
+\subsection{Lựa chọn công nghệ}
+\begin{table}[H]
+  \centering
+  \caption{Các công nghệ chính}
+  \begin{tabularx}{\textwidth}{lX}
+    \toprule
+    \textbf{Thành phần} & \textbf{Công nghệ} \\
+    \midrule
+    Frontend & HTML, CSS, JavaScript, Web Crypto API \\
+    Backend & Python FastAPI, SQLite/MySQL, Uvicorn \\
+    Vector DB & Qdrant, cosine similarity, HNSW index \\
+    Edge & MaixCAM, Python runtime, camera GC4653, MJPEG stream \\
+    AI pipeline & YOLO face detection, V9 landmarks, ArcFace P3 embedding \\
+    Bảo mật & AES-GCM, XTEA-CTR, cache mã hóa trên thiết bị \\
+    \bottomrule
+  \end{tabularx}
+\end{table}

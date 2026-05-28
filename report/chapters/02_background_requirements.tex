@@ -1,0 +1,41 @@
+\section{Cơ sở lý thuyết và yêu cầu hệ thống}
+
+\subsection{AIoT và xử lý tại biên}
+AIoT kết hợp trí tuệ nhân tạo với thiết bị IoT nhằm xử lý dữ liệu gần nguồn phát sinh. Trong đề tài này, MaixCAM đóng vai trò thiết bị biên, xử lý ảnh camera và đối sánh khuôn mặt cục bộ sau khi đồng bộ dữ liệu từ server.
+
+\subsection{Nhận diện khuôn mặt}
+Pipeline nhận diện khuôn mặt trong đồ án gồm ba bước chính:
+
+\begin{enumerate}
+  \item Phát hiện khuôn mặt trong ảnh camera.
+  \item Ước lượng landmark để căn chỉnh khuôn mặt.
+  \item Trích xuất vector embedding 128 chiều và đối sánh bằng cosine similarity.
+\end{enumerate}
+
+TODO: Bổ sung công thức cosine similarity, mô tả mô hình YOLO, V9 landmark và ArcFace P3 theo mức chi tiết yêu cầu của môn học.
+
+\subsection{Cơ sở dữ liệu vector}
+Cơ sở dữ liệu vector được dùng để tìm kiếm embedding gần nhất theo độ tương đồng. Trong hệ thống, Qdrant lưu collection \texttt{face\_embeddings}, cho phép tìm kiếm theo vector và lọc theo chuyến bay.
+
+\subsection{Yêu cầu chức năng}
+\begin{longtable}{p{0.18\textwidth}p{0.72\textwidth}}
+\toprule
+\textbf{Mã} & \textbf{Yêu cầu} \\
+\midrule
+FR-01 & Người dùng có thể tìm chuyến bay và tạo booking. \\
+FR-02 & Người dùng có thể chọn ghế, thanh toán mô phỏng và xem vé. \\
+FR-03 & Người dùng có thể đăng ký khuôn mặt cho booking. \\
+FR-04 & Server có thể lưu và tìm kiếm vector khuôn mặt theo chuyến bay. \\
+FR-05 & MaixCAM có thể đồng bộ cache hành khách của chuyến bay. \\
+FR-06 & MaixCAM có thể nhận diện khuôn mặt và hiển thị thông tin chuyến bay. \\
+FR-07 & Admin có thể quản lý chuyến bay, booking, trạng thái và đồng bộ thiết bị. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Yêu cầu phi chức năng}
+\begin{itemize}
+  \item Độ trễ nhận diện trên thiết bị biên đủ thấp để tạo trải nghiệm gần thời gian thực.
+  \item Dữ liệu sinh trắc học không lưu plaintext cố định trên thiết bị biên.
+  \item Hệ thống có thể hoạt động offline sau khi MaixCAM đã đồng bộ cache.
+  \item Kiến trúc đủ rõ để mở rộng sang cơ sở dữ liệu production và triển khai nhiều thiết bị.
+\end{itemize}

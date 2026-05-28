@@ -1,0 +1,34 @@
+\section{Giới thiệu}
+
+\subsection{Bối cảnh đề tài}
+Trong các hệ thống sân bay, hành khách thường cần tra cứu thông tin chuyến bay, cửa ra máy bay, giờ lên máy bay và trạng thái vé thông qua vé giấy, mã QR hoặc ứng dụng di động. Các phương thức này vẫn phụ thuộc vào thao tác thủ công và có thể gây chậm trễ tại các điểm check-in hoặc kiosk tự phục vụ.
+
+Đề tài đề xuất một hệ thống tra cứu thông tin chuyến bay bằng nhận diện khuôn mặt. Hành khách đăng ký khuôn mặt khi đặt vé, sau đó có thể nhìn vào camera tại kiosk để hệ thống tự động nhận diện và hiển thị thông tin chuyến bay tương ứng.
+
+\subsection{Mục tiêu}
+Mục tiêu của đồ án gồm:
+
+\begin{itemize}
+  \item Xây dựng ứng dụng web cho luồng tìm chuyến bay, đặt vé, chọn ghế, thanh toán mô phỏng và đăng ký khuôn mặt.
+  \item Xây dựng backend FastAPI để quản lý chuyến bay, hành khách, booking, thanh toán mô phỏng và dữ liệu khuôn mặt.
+  \item Tích hợp Qdrant để lưu trữ và tìm kiếm vector đặc trưng khuôn mặt.
+  \item Triển khai ứng dụng edge trên MaixCAM để nhận diện khuôn mặt theo thời gian thực.
+  \item Thiết kế cơ chế đồng bộ cache và mã hóa dữ liệu giữa server và thiết bị biên.
+  \item Đánh giá độ trễ, khả năng đồng bộ và độ ổn định của nguyên mẫu.
+\end{itemize}
+
+\subsection{Phạm vi thực hiện}
+Đồ án tập trung vào nguyên mẫu chức năng end-to-end. Hệ thống chưa nhằm thay thế một giải pháp nhận dạng sinh trắc học sản xuất thực tế tại sân bay, mà tập trung chứng minh khả năng tích hợp giữa Web, Server, Vector Database và thiết bị AIoT biên.
+
+\subsection{Đóng góp chính}
+\begin{itemize}
+  \item Thiết kế kiến trúc ba khối Web -- Server -- Edge cho bài toán tra cứu chuyến bay.
+  \item Xây dựng pipeline nhận diện khuôn mặt gồm phát hiện khuôn mặt, landmark và embedding.
+  \item Tích hợp cơ chế đồng bộ cache mã hóa xuống MaixCAM để giảm phụ thuộc mạng.
+  \item Tạo giao diện web và admin phục vụ demo luồng nghiệp vụ.
+  \item Thực hiện kiểm thử tích hợp và stress test với nhiều hành khách.
+\end{itemize}
+
+\subsection{Bố cục báo cáo}
+Báo cáo gồm sáu chương. Chương 1 giới thiệu đề tài. Chương 2 trình bày cơ sở lý thuyết và yêu cầu. Chương 3 mô tả kiến trúc hệ thống. Chương 4 trình bày thiết kế và hiện thực. Chương 5 đánh giá và kiểm thử. Chương 6 kết luận và đề xuất hướng phát triển.
+

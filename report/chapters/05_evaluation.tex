@@ -1,0 +1,61 @@
+\section{Kiểm thử và đánh giá}
+
+\subsection{Mục tiêu kiểm thử}
+Kiểm thử tập trung vào các mục tiêu:
+
+\begin{itemize}
+  \item Xác minh luồng end-to-end từ đặt vé, đăng ký khuôn mặt, đồng bộ cache đến nhận diện trên MaixCAM.
+  \item Đánh giá độ trễ xử lý trên thiết bị biên.
+  \item Đánh giá khả năng chịu tải của server khi đăng ký nhiều hành khách.
+  \item Kiểm tra cơ chế mã hóa và đồng bộ cache.
+\end{itemize}
+
+\subsection{Kịch bản kiểm thử}
+\begin{table}[H]
+  \centering
+  \caption{Các kịch bản kiểm thử chính}
+  \begin{tabularx}{\textwidth}{lXl}
+    \toprule
+    \textbf{Mã} & \textbf{Kịch bản} & \textbf{Kết quả} \\
+    \midrule
+    TC-01 & Tạo booking và chọn ghế hợp lệ & TODO \\
+    TC-02 & Đăng ký khuôn mặt cho booking & TODO \\
+    TC-03 & Đồng bộ cache chuyến bay xuống MaixCAM & TODO \\
+    TC-04 & Nhận diện đúng hành khách đã đăng ký & TODO \\
+    TC-05 & Không match với hành khách chưa đăng ký & TODO \\
+    TC-06 & Stress test nhiều hành khách trên server & TODO \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Kết quả benchmark hiện tại}
+Theo ghi chú benchmark trong dự án, nguyên mẫu đã đạt các kết quả chính sau:
+
+\begin{table}[H]
+  \centering
+  \caption{Tóm tắt kết quả benchmark}
+  \begin{tabularx}{\textwidth}{lX}
+    \toprule
+    \textbf{Chỉ số} & \textbf{Kết quả ghi nhận} \\
+    \midrule
+    YOLO detection trên MaixCAM & Khoảng 11.17 ms trung bình \\
+    Pipeline edge end-to-end & Khoảng 15.86 ms trung bình \\
+    Throughput edge & Khoảng 53 FPS trong stress test \\
+    Registration server & 100\% thành công trong các batch 10/50/100/200 hành khách \\
+    Registration latency & Khoảng 285 ms trung bình \\
+    Sync 200 hành khách & Dưới 500 ms, khoảng 226 KB dữ liệu \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Nhận xét}
+Kết quả ban đầu cho thấy hướng xử lý tại biên phù hợp với bài toán kiosk tra cứu chuyến bay. Việc đồng bộ cache trước giúp thiết bị tiếp tục nhận diện ngay cả khi mạng không ổn định. Tuy nhiên, hệ thống vẫn cần đánh giá thêm với dữ liệu thực tế đa dạng hơn, điều kiện ánh sáng khác nhau và kịch bản nhiều thiết bị cùng đồng bộ.
+
+\subsection{Hạn chế}
+\begin{itemize}
+  \item Dataset và mô hình trong nguyên mẫu chưa đại diện đầy đủ cho môi trường sân bay thực tế.
+  \item Cần chuẩn hóa quy trình xin đồng ý sử dụng dữ liệu sinh trắc học.
+  \item Cần bổ sung kiểm thử bảo mật chuyên sâu và kiểm thử tải dài hạn.
+  \item Cần hoàn thiện đóng gói triển khai production nếu mở rộng ngoài phạm vi môn học.
+\end{itemize}
+

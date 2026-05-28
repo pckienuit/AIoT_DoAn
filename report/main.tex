@@ -1,0 +1,158 @@
+% --- Dung extarticle va ep co chu than bai 13pt ---
+\documentclass[12pt]{extarticle}
+
+\usepackage{graphicx}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage{lmodern}
+
+% --- Cau hinh kho giay ---
+\usepackage[a4paper, left=3cm, right=2cm, top=2.5cm, bottom=2.5cm]{geometry}
+
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage[american]{circuitikz}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage{anyfontsize}
+\usepackage{adjustbox}
+\usetikzlibrary{
+  shapes.geometric,
+  arrows,
+  arrows.meta,
+  positioning,
+  calc,
+  decorations.pathmorphing,
+  circuits.logic.US,
+  circuits.logic.IEC,
+  matrix,
+  fit,
+  backgrounds,
+  automata
+}
+\usepackage{booktabs}
+\usepackage{caption}
+\captionsetup[table]{skip=10pt}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\makeatletter
+\renewcommand\normalsize{%
+  \@setfontsize\normalsize{13pt}{16pt}%
+  \abovedisplayskip 13pt plus 3pt minus 7pt%
+  \abovedisplayshortskip \z@ plus 3pt%
+  \belowdisplayshortskip 7pt plus 3pt minus 4pt%
+  \belowdisplayskip \abovedisplayskip%
+}
+\makeatother
+\normalsize
+
+\onehalfspacing
+\setlength{\parindent}{1.25cm}
+\setlength{\parskip}{0.2em}
+\graphicspath{{figures/}{picture/}}
+
+% --- Dinh nghia mau sac ---
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{uitblue}{RGB}{0, 60, 179}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{blue},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    float=hbt!,
+    language=Python
+}
+\lstset{style=mystyle}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    filecolor=magenta,
+    urlcolor=blue,
+    pdftitle={Báo cáo Đồ án AIoT Flight Face Lookup},
+    pdfpagemode=FullScreen,
+}
+
+% --- Thong tin bao cao: cap nhat cac dong TODO theo lop/nhom cua ban ---
+\newcommand{\projectname}{Hệ thống tra cứu thông tin chuyến bay bằng nhận diện khuôn mặt}
+\newcommand{\shortproject}{AIoT Flight Face Lookup}
+\newcommand{\coursename}{TODO: Tên môn học}
+\newcommand{\coursecode}{TODO: Mã lớp}
+\newcommand{\university}{ĐẠI HỌC QUỐC GIA THÀNH PHỐ HỒ CHÍ MINH}
+\newcommand{\faculty}{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN}
+\newcommand{\teacher}{TODO: Giảng viên hướng dẫn}
+\newcommand{\studentone}{TODO: Sinh viên 1}
+\newcommand{\studentoneid}{TODO: MSSV}
+\newcommand{\studenttwo}{TODO: Sinh viên 2}
+\newcommand{\studenttwoid}{TODO: MSSV}
+\newcommand{\reportdate}{\today}
+
+\title{\projectname}
+\author{\studentone \and \studenttwo}
+
+\begin{document}
+
+\input{chapters/00_frontmatter}
+
+{
+  \hypersetup{linkcolor=black}
+  \tableofcontents
+  \enlargethispage{2cm}
+  \newpage
+  \listoffigures
+  \newpage
+  \listoftables
+  \newpage
+  \lstlistoflistings
+  \newpage
+}
+
+\input{chapters/01_introduction}
+\input{chapters/02_background_requirements}
+\input{chapters/03_system_architecture}
+\input{chapters/04_design_implementation}
+\input{chapters/05_evaluation}
+\input{chapters/06_conclusion}
+
+\newpage
+\appendix
+\renewcommand{\thesection}{\Alph{section}}
+\input{chapters/appendix}
+
+\newpage
+\renewcommand{\refname}{Tài liệu tham khảo}
+\addcontentsline{toc}{section}{Tài liệu tham khảo}
+\nocite{*}
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

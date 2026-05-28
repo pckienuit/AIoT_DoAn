@@ -1,0 +1,77 @@
+\begin{titlepage}
+    % --- Ve khung vien doi ---
+    \begin{tikzpicture}[overlay,remember picture]
+        \draw [line width=3pt, uitblue]
+            ($ (current page.north west) + (2.0cm,-2.0cm) $)
+            rectangle
+            ($ (current page.south east) + (-1.5cm,2.0cm) $);
+        \draw [line width=1pt, uitblue]
+            ($ (current page.north west) + (2.15cm,-2.15cm) $)
+            rectangle
+            ($ (current page.south east) + (-1.65cm,2.15cm) $);
+    \end{tikzpicture}
+
+    \centering
+
+    % --- Phan tieu de truong ---
+    \vspace*{-0.5cm}
+    \textbf{\fontsize{14}{16}\selectfont \university}\\
+    \vspace{0.2cm}
+    \textbf{\fontsize{14}{16}\selectfont \faculty}
+
+    \vspace{1.5cm}
+
+    % --- Logo truong ---
+    \IfFileExists{picture/Logo_UIT_updated.jpg}{
+        \includegraphics[width=0.45\textwidth]{picture/Logo_UIT_updated.jpg}
+    }{
+        \begin{tikzpicture}
+            \draw[line width=1pt, uitblue] (0,0) rectangle (6,3);
+            \node[align=center, uitblue] at (3,1.5) {\textbf{LOGO}\\\texttt{picture/Logo\_UIT\_updated.jpg}};
+        \end{tikzpicture}
+    }
+
+    \vspace{1.7cm}
+
+    % --- Phan tieu de bao cao ---
+    \textbf{\fontsize{18}{22}\selectfont BÁO CÁO ĐỒ ÁN}\\[0.5cm]
+
+    \textbf{\fontsize{16}{20}\selectfont \coursename\ \textcolor{red}{\coursecode}}\\[0.5cm]
+
+    \textbf{\fontsize{16}{20}\selectfont ĐỀ TÀI:}\\[0.5cm]
+
+    \textbf{\fontsize{20}{24}\selectfont \projectname}
+
+    \vspace{1cm}
+
+    % --- Thong tin sinh vien/GVHD ---
+    \begin{table}[h]
+        \centering
+        \renewcommand{\arraystretch}{1.2}
+        \begin{tabular}{r r l r}
+            \textbf{Giảng viên hướng dẫn} & : & \teacher & \hphantom{0000000} \\
+            \textbf{Sinh viên thực hiện}  & : & \studentone & \studentoneid \\
+                                          &   & \studenttwo & \studenttwoid \\
+        \end{tabular}
+    \end{table}
+
+    \vfill
+    {\large \reportdate}
+\end{titlepage}
+
+\newpage
+\section*{Lời cảm ơn}
+\addcontentsline{toc}{section}{Lời cảm ơn}
+TODO: Viết lời cảm ơn giảng viên hướng dẫn, nhà trường, các nguồn tài liệu và thành viên nhóm.
+
+\newpage
+\section*{Tóm tắt}
+\addcontentsline{toc}{section}{Tóm tắt}
+Đồ án xây dựng một hệ thống AIoT hỗ trợ tra cứu thông tin chuyến bay thông qua nhận diện khuôn mặt. Hệ thống gồm ba khối chính: ứng dụng web để đặt vé và đăng ký khuôn mặt, máy chủ FastAPI kết hợp cơ sở dữ liệu quan hệ và cơ sở dữ liệu vector Qdrant, và thiết bị MaixCAM thực hiện nhận diện khuôn mặt ở biên.
+
+Trong nguyên mẫu hiện tại, trình duyệt tạo vector đặc trưng khuôn mặt bằng pipeline nhận diện, máy chủ lưu thông tin hành khách và vector, còn MaixCAM đồng bộ cache mã hóa để đối sánh cục bộ. Báo cáo trình bày mục tiêu, kiến trúc, thiết kế chi tiết, các cơ chế bảo mật, kết quả kiểm thử và hướng phát triển của hệ thống.
+
+\textbf{Từ khóa:} AIoT, nhận diện khuôn mặt, MaixCAM, FastAPI, Qdrant, edge computing, bảo mật sinh trắc học.
+
+\newpage
+

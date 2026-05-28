@@ -1,0 +1,63 @@
+\section{Thiết kế và hiện thực}
+
+\subsection{Khối Web Client}
+Khối web nằm trong thư mục \texttt{web\_stage3/} và được phục vụ trực tiếp bởi FastAPI. Web client bao gồm các màn hình tìm chuyến bay, đặt vé, chọn ghế, thanh toán mô phỏng, xem vé, check-in, kiosk và trang quản trị.
+
+\subsubsection{Luồng nghiệp vụ chính}
+\begin{enumerate}
+  \item Tìm chuyến bay theo điểm đi, điểm đến và ngày bay.
+  \item Chọn chuyến bay và chọn ghế.
+  \item Tạo booking và thanh toán mô phỏng.
+  \item Đăng ký khuôn mặt hoặc bỏ qua tùy lựa chọn.
+  \item Tra cứu vé hoặc check-in.
+\end{enumerate}
+
+\subsubsection{Đăng ký khuôn mặt}
+TODO: Bổ sung ảnh giao diện \texttt{register-face}, mô tả chi tiết cách lấy embedding từ upload/webcam và các điều kiện quality gate.
+
+\subsection{Khối Server}
+Server nằm trong thư mục \texttt{server/}. File \texttt{server/main.py} khởi tạo FastAPI, đăng ký router, khởi tạo database khi startup và mount web static.
+
+\subsubsection{Các nhóm API}
+\begin{itemize}
+  \item \texttt{server/routes.py}: API nghiệp vụ chuyến bay, ghế, booking và payment.
+  \item \texttt{server/face\_routes.py}: API đăng ký, đối sánh và đồng bộ vector khuôn mặt.
+  \item \texttt{server/admin\_routes.py}: API quản trị, đồng bộ thiết bị, trạng thái Qdrant và bảo trì dữ liệu.
+\end{itemize}
+
+\subsubsection{Lưu trữ dữ liệu}
+Dữ liệu metadata như hành khách, chuyến bay, lịch bay, booking và trạng thái được lưu trong database quan hệ. Vector khuôn mặt được lưu trong Qdrant để tối ưu tìm kiếm nearest neighbor.
+
+\subsection{Khối MaixCAM Edge}
+Ứng dụng edge nằm trong \texttt{MaixCAM\_App/}. File \texttt{main.py} điều phối pipeline camera, nhận diện, cache matching và hiển thị. Các module hỗ trợ gồm:
+
+\begin{itemize}
+  \item \texttt{config.py}: đọc cấu hình server, ngưỡng nhận diện và thiết bị.
+  \item \texttt{sync\_cache.py}: đồng bộ cache mã hóa từ server.
+  \item \texttt{display.py}: vẽ giao diện/HUD.
+  \item \texttt{mjpeg\_server.py}: stream hình ảnh camera qua HTTP.
+\end{itemize}
+
+\subsection{Bảo mật dữ liệu}
+Hệ thống áp dụng hai lớp bảo vệ chính:
+
+\begin{itemize}
+  \item Web gửi vector khuôn mặt tới server qua cơ chế mã hóa AES-GCM.
+  \item Server gửi cache xuống MaixCAM theo dạng mã hóa XTEA-CTR, thiết bị chỉ giải mã khi cần đối sánh trong RAM.
+\end{itemize}
+
+TODO: Bổ sung sơ đồ sequence bảo mật và phân tích rủi ro dữ liệu sinh trắc học.
+
+\subsection{Triển khai}
+Các lệnh triển khai cơ bản:
+
+\begin{lstlisting}[language=bash,caption={Chạy server và web}]
+docker compose up -d
+uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash,caption={Triển khai ứng dụng lên MaixCAM}]
+python deploy_to_device.py
+python sync_maixcam.py
+python restart_maixcam.py
+\end{lstlisting}

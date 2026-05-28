@@ -1,0 +1,17 @@
+\section{Kết luận và hướng phát triển}
+
+\subsection{Kết luận}
+Đồ án đã xây dựng được nguyên mẫu hệ thống tra cứu thông tin chuyến bay bằng nhận diện khuôn mặt theo kiến trúc AIoT. Hệ thống tích hợp ứng dụng web, backend FastAPI, Qdrant vector database và thiết bị MaixCAM edge. Các chức năng chính gồm đặt vé, đăng ký khuôn mặt, lưu trữ vector, đồng bộ cache mã hóa và nhận diện hành khách trên thiết bị biên.
+
+Kết quả kiểm thử ban đầu cho thấy pipeline nhận diện trên MaixCAM có độ trễ thấp, server xử lý ổn định với batch nhiều hành khách và cơ chế cache giúp giảm phụ thuộc mạng trong quá trình nhận diện.
+
+\subsection{Hướng phát triển}
+\begin{itemize}
+  \item Cải thiện giao diện người dùng và quy trình đăng ký khuôn mặt.
+  \item Đánh giá mô hình trên tập dữ liệu lớn hơn và đa dạng hơn.
+  \item Bổ sung liveness detection để giảm nguy cơ giả mạo bằng ảnh hoặc video.
+  \item Chuẩn hóa quản lý khóa, phân quyền, audit log và xóa dữ liệu sinh trắc học theo chính sách.
+  \item Triển khai nhiều MaixCAM đồng thời và kiểm thử đồng bộ theo nhiều chuyến bay.
+  \item Đóng gói hệ thống bằng Docker đầy đủ cho backend, database và dashboard quản trị.
+\end{itemize}
+
