@@ -62,6 +62,10 @@
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
           Edge Sync
         </button>
+        <button class="admin-bar__nav-btn" data-tab="qdrant">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          Qdrant DB
+        </button>
       </nav>
       <div class="admin-bar__actions">
         <button class="btn btn--ghost btn--sm" id="logoutBtn">Đăng xuất</button>
@@ -330,6 +334,71 @@
           </div>
         </div>
 
+        <!-- ===== QDRANT DATABASE ===== -->
+        <div class="admin-section" id="qdrantSection">
+          <div class="section-header">
+            <div>
+              <h2>Quản lý Qdrant Vector DB</h2>
+              <p style="color:var(--muted);margin-top:4px;">Kiểm tra trạng thái, xem danh sách vector và dọn dẹp orphans</p>
+            </div>
+            <button class="btn btn--ghost" id="refreshQdrantBtn">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Làm mới
+            </button>
+          </div>
+
+          <div class="sync-device-card" style="margin-bottom:var(--sp-6);">
+            <div style="margin-bottom:var(--sp-4);">
+              <span style="color:var(--muted);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:0.1em;font-family:'JetBrains Mono',monospace;">Trạng thái Qdrant</span>
+              <div style="display:flex;align-items:center;gap:var(--sp-3);margin-top:4px;">
+                <span class="status-dot status-dot--offline" id="qdrantStatusDot"></span>
+                <span class="mono" style="font-size:var(--text-base);" id="qdrantUrlDisplay">—</span>
+              </div>
+            </div>
+            <div class="metric-stack" style="margin-bottom:var(--sp-4);display:flex;gap:var(--sp-6);">
+              <div class="metric">
+                <span>Collection</span>
+                <strong id="qdrantCollection">—</strong>
+              </div>
+              <div class="metric">
+                <span>Vector Size</span>
+                <strong id="qdrantVectorSize">—</strong>
+              </div>
+              <div class="metric">
+                <span>Tổng số Vector</span>
+                <strong id="qdrantTotalPoints">—</strong>
+              </div>
+            </div>
+            <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;align-items:center;">
+              <button class="btn btn--primary" id="cleanOrphansBtn">Dọn dẹp Orphans (Vector mồ côi)</button>
+            </div>
+          </div>
+
+          <div class="panel panel--raised">
+            <div class="panel__header" style="padding:var(--sp-5) var(--sp-6);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+              <h3>Danh sách Vector lưu trữ</h3>
+              <span id="qdrantPointsCount" class="badge badge--muted">0 vectors</span>
+            </div>
+            <div class="panel__body" style="padding:0;">
+              <div class="data-table-wrap" style="border:none;margin:0;">
+                <table class="data-table" id="qdrantPointsTable">
+                  <thead><tr>
+                    <th>Point ID</th>
+                    <th>Hành khách</th>
+                    <th>Chuyến bay</th>
+                    <th>Mã đặt</th>
+                    <th>Ghế</th>
+                    <th>Trạng thái</th>
+                    <th>Thao tác</th>
+                  </tr></thead>
+                  <tbody id="qdrantPointsBody"><tr><td colspan="7" style="text-align:center;color:var(--muted);padding:var(--sp-8);">Đang tải…</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
       </div>
     </div>
   </div>
@@ -459,6 +528,13 @@
     }
     async function checkSyncStatus() { return adminRequest("/api/admin/sync/status"); }
     async function runFlightStatusUpdate() { return adminRequest("/api/admin/flight-status/update", { method: "POST" }); }
+    async function fetchQdrantStatus() { return adminRequest("/api/admin/qdrant/status"); }
+    async function fetchQdrantPoints() { return adminRequest("/api/admin/qdrant/points"); }
+    async function deleteQdrantPoint(pointId) {
+      return adminRequest(`/api/admin/qdrant/points/${pointId}`, { method: "DELETE" });
+    }
+    async function cleanQdrantOrphans() { return adminRequest("/api/admin/qdrant/clean-orphans", { method: "POST" }); }
+
 
     // ============================================================
     // Helpers
@@ -618,6 +694,7 @@
         else if (tab === "bookings") loadBookings();
         else if (tab === "sync") loadSync();
         else if (tab === "dashboard") loadDashboard();
+        else if (tab === "qdrant") loadQdrant();
       });
     });
 
@@ -1206,6 +1283,95 @@
         } else {
           toast(`Cache flight #${flightId} không tồn tại trên edge`, "info");
         }
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      }
+    };
+
+    // ============================================================
+    // Qdrant DB
+    // ============================================================
+    async function loadQdrant() {
+      // 1. Fetch and render Qdrant status
+      const dot = document.getElementById("qdrantStatusDot");
+      const urlDisplay = document.getElementById("qdrantUrlDisplay");
+      dot.className = "status-dot status-dot--offline";
+      urlDisplay.textContent = "Đang kết nối…";
+      try {
+        const status = await fetchQdrantStatus();
+        dot.className = "status-dot " + (status.success ? "status-dot--online" : "status-dot--offline");
+        urlDisplay.textContent = status.url;
+        document.getElementById("qdrantCollection").textContent = status.collection || "—";
+        document.getElementById("qdrantVectorSize").textContent = status.vector_size ? `${status.vector_size} dim` : "—";
+        document.getElementById("qdrantTotalPoints").textContent = status.points_count != null ? `${status.points_count} points` : "—";
+      } catch (e) {
+        dot.className = "status-dot status-dot--offline";
+        urlDisplay.textContent = "Lỗi kết nối";
+        document.getElementById("qdrantCollection").textContent = "—";
+        document.getElementById("qdrantVectorSize").textContent = "—";
+        document.getElementById("qdrantTotalPoints").textContent = "—";
+      }
+
+      // 2. Fetch and render Qdrant points
+      const tbody = document.getElementById("qdrantPointsBody");
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:var(--sp-6);">Đang tải…</td></tr>';
+      try {
+        const points = await fetchQdrantPoints();
+        document.getElementById("qdrantPointsCount").textContent = `${points.length} vectors`;
+        if (!points.length) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:var(--sp-6);">Không có vector nào trong database</td></tr>';
+          return;
+        }
+        tbody.innerHTML = points.map(p => `
+          <tr>
+            <td class="mono" style="font-size:11px;">${p.point_id}</td>
+            <td><strong>${p.passenger_name}</strong></td>
+            <td><span class="mono">${p.flight_number}</span> <span style="color:var(--muted);font-size:11px;">(ID:${p.flight_id})</span></td>
+            <td class="mono">${p.booking_code}</td>
+            <td class="mono">${p.seat_number}</td>
+            <td>
+              ${p.is_orphan 
+                ? '<span class="badge badge--danger" title="Không liên kết với đặt vé hoạt động nào">Orphan (Mồ côi)</span>'
+                : '<span class="badge badge--ok">Active (Hoạt động)</span>'}
+            </td>
+            <td>
+              <button class="btn btn--ghost btn--sm" style="color:var(--danger);" onclick="window._deleteQdrantPoint('${p.point_id}')">Xóa</button>
+            </td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:var(--sp-6);">Lỗi: ${e.message}</td></tr>`;
+      }
+    }
+
+    document.getElementById("refreshQdrantBtn").addEventListener("click", loadQdrant);
+
+    document.getElementById("cleanOrphansBtn").addEventListener("click", async () => {
+      const btn = document.getElementById("cleanOrphansBtn");
+      btn.disabled = true;
+      btn.textContent = "Đang dọn dẹp…";
+      try {
+        const res = await cleanQdrantOrphans();
+        if (res.success) {
+          toast(`Đã xóa thành công ${res.deleted_count} vector mồ côi!`, "success");
+          loadQdrant();
+        } else {
+          toast("Dọn dẹp thất bại!", "error");
+        }
+      } catch (e) {
+        toast("Lỗi: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Dọn dẹp Orphans (Vector mồ côi)";
+      }
+    });
+
+    window._deleteQdrantPoint = async function(pointId) {
+      if (!confirm(`Xóa vector này khỏi Qdrant?\nPoint ID: ${pointId}\n\nHành động này cũng sẽ hủy đăng ký khuôn mặt liên kết trong SQLite.`)) return;
+      try {
+        await deleteQdrantPoint(pointId);
+        toast("Đã xóa vector khỏi Qdrant!", "success");
+        loadQdrant();
       } catch (e) {
         toast("Lỗi: " + e.message, "error");
       }

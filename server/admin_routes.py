@@ -972,3 +972,131 @@ def run_flight_status_update(_payload: RunFlightStatusUpdate = None) -> dict[str
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Qdrant Management
+# ---------------------------------------------------------------------------
+
+@router.get("/qdrant/status")
+def get_qdrant_status() -> dict[str, Any]:
+    try:
+        from server.vector_service import get_qdrant_client, COLLECTION_NAME, get_vector_status
+        status_info = get_vector_status()
+        client = get_qdrant_client()
+        if client.collection_exists(COLLECTION_NAME):
+            coll = client.get_collection(COLLECTION_NAME)
+            points_count = coll.points_count
+        else:
+            points_count = 0
+        return {
+            "success": True,
+            **status_info,
+            "points_count": points_count
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Qdrant query failed: {str(exc)}")
+
+
+@router.get("/qdrant/points")
+def get_qdrant_points() -> list[dict[str, Any]]:
+    try:
+        from server.vector_service import get_qdrant_client, COLLECTION_NAME
+        client = get_qdrant_client()
+        
+        # Get active point IDs from SQLite database
+        active_ids = set()
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT qdrant_point_id FROM bookings WHERE qdrant_point_id IS NOT NULL AND status NOT IN ('cancelled', 'refunded')"
+            ).fetchall()
+            for r in rows:
+                dict_r = row_to_dict(r)
+                if dict_r.get("qdrant_point_id"):
+                    active_ids.add(dict_r["qdrant_point_id"])
+                    
+        if not client.collection_exists(COLLECTION_NAME):
+            return []
+            
+        records, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1000,
+            with_vectors=False,
+            with_payload=True
+        )
+        
+        points = []
+        for r in records:
+            p_id = str(r.id)
+            is_orphan = p_id not in active_ids
+            payload = r.payload or {}
+            points.append({
+                "point_id": p_id,
+                "passenger_name": payload.get("passenger_name", "Unknown"),
+                "flight_id": payload.get("flight_id"),
+                "flight_number": payload.get("flight_number", "Unknown"),
+                "booking_code": payload.get("booking_code", "Unknown"),
+                "seat_number": payload.get("seat_number", "—"),
+                "is_orphan": is_orphan
+            })
+        return points
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch Qdrant points: {str(exc)}")
+
+
+@router.delete("/qdrant/points/{point_id}")
+def delete_qdrant_point(point_id: str) -> dict[str, Any]:
+    try:
+        from server.vector_service import delete_face_embedding
+        delete_face_embedding(point_id)
+        
+        # Also clean up references in SQLite bookings if any
+        _execute(
+            "UPDATE bookings SET qdrant_point_id = NULL, face_registered = 0 WHERE qdrant_point_id = ?",
+            (point_id,),
+        )
+        return {"success": True, "point_id": point_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete Qdrant point: {str(exc)}")
+
+
+@router.post("/qdrant/clean-orphans")
+def clean_qdrant_orphans() -> dict[str, Any]:
+    try:
+        from server.vector_service import get_qdrant_client, COLLECTION_NAME, delete_face_embedding
+        client = get_qdrant_client()
+        
+        # Get active point IDs from SQLite database
+        active_ids = set()
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT qdrant_point_id FROM bookings WHERE qdrant_point_id IS NOT NULL AND status NOT IN ('cancelled', 'refunded')"
+            ).fetchall()
+            for r in rows:
+                dict_r = row_to_dict(r)
+                if dict_r.get("qdrant_point_id"):
+                    active_ids.add(dict_r["qdrant_point_id"])
+                    
+        if not client.collection_exists(COLLECTION_NAME):
+            return {"success": True, "deleted_count": 0, "deleted_ids": []}
+            
+        records, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1000,
+            with_vectors=False,
+            with_payload=False
+        )
+        
+        orphans = [str(r.id) for r in records if str(r.id) not in active_ids]
+        
+        for o_id in orphans:
+            delete_face_embedding(o_id)
+            
+        return {
+            "success": True,
+            "deleted_count": len(orphans),
+            "deleted_ids": orphans
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to clean orphans: {str(exc)}")
+
