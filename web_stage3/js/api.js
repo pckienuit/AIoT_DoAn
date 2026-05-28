@@ -87,10 +87,10 @@ async function apiGetStats() {
 
 async function apiSearchFlights({ origin, destination, date, passengers = 1 } = {}) {
   const params = new URLSearchParams();
-  if (origin)      params.set("origin", origin);
+  if (origin) params.set("origin", origin);
   if (destination) params.set("destination", destination);
-  if (date)        params.set("flight_date", date);
-  if (passengers)  params.set("passengers", String(passengers));
+  if (date) params.set("flight_date", date);
+  if (passengers) params.set("passengers", String(passengers));
   const qs = params.toString();
   return apiRequest(`/api/flights/search${qs ? "?" + qs : ""}`);
 }
@@ -183,7 +183,7 @@ async function apiFaceRegister(payload) {
   });
 }
 
-async function apiFaceMatch(flightId, embedding, threshold = 0.032) {
+async function apiFaceMatch(flightId, embedding, threshold = 0.028) {
   return apiRequest("/api/face/match", {
     method: "POST",
     body: JSON.stringify({ flight_id: flightId, embedding, threshold }),

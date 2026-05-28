@@ -251,6 +251,7 @@ def run_stress_test(num_iterations: int, use_camera: bool = True):
         cam_w = FACE_DET.input_width()
         cam_h = FACE_DET.input_height()
         cam = camera.Camera(cam_w, cam_h, FACE_DET.input_format())
+        cam.hmirror(1)
         print("[OK] Camera ready: {}x{}".format(cam_w, cam_h))
     
     # Timing storage

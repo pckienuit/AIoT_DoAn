@@ -2,16 +2,18 @@
 import paramiko
 import sys
 
-HOST = "10.154.35.1"
+HOST = "10.154.36.1"
 USER = "root"
 PASS = "root"
 
 SCRIPT = """
 from maix import camera
-print("--- Camera constructor doc ---")
-print(camera.Camera.__init__.__doc__)
-print("--- Camera class doc ---")
-print(camera.Camera.__doc__)
+cam = camera.Camera(320, 240)
+print("--- hmirror doc ---")
+print(cam.hmirror.__doc__)
+print("--- vflip doc ---")
+print(cam.vflip.__doc__)
+cam.close()
 """
 
 def main():

@@ -426,6 +426,7 @@ def main():
     cam_w = 640
     cam_h = 480
     cam  = camera.Camera(cam_w, cam_h, FACE_DET.input_format())
+    cam.hmirror(1)
 
     enable_lcd = CFG.get("enable_lcd", True)
     disp = None
