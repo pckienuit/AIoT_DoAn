@@ -467,12 +467,8 @@ def delete_face_registration(booking_id: int) -> dict[str, Any]:
 
     if point_id:
         try:
-            from server.vector_service import get_qdrant_client, COLLECTION_NAME
-            client = get_qdrant_client()
-            client.delete(
-                collection_name=COLLECTION_NAME,
-                points=[point_id],
-            )
+            from server.vector_service import delete_face_embedding
+            delete_face_embedding(point_id)
         except Exception:
             pass
 

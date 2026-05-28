@@ -60,9 +60,9 @@ export async function initCheckin(params) {
         if (match.matched) {
           document.getElementById("stepCapture").classList.add("is-done");
           document.getElementById("stepVerify").classList.add("is-active");
-          const score = Math.round((1 - match.distance) * 100);
-          // Show match result, allow confirm checkin
-          if (confirm(`Độ khớp: ${score}%. Xác nhận check-in?`)) {
+          const distance = Number(match.distance).toFixed(4);
+          const threshold = Number(match.threshold ?? 0.02).toFixed(4);
+          if (confirm(`Khuôn mặt đã xác thực (distance ${distance} <= ${threshold}). Xác nhận check-in?`)) {
             await apiCheckin(booking.id);
             alert("Check-in thành công!");
             navigate("/my-tickets");

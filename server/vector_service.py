@@ -1,3 +1,4 @@
+import math
 import os
 from functools import lru_cache
 from typing import Any
@@ -8,6 +9,9 @@ from qdrant_client.http import models
 COLLECTION_NAME = "face_embeddings"
 VECTOR_SIZE = 128
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+MIN_ACTIVE_DIMS = 16
+MIN_EMBEDDING_NORM = 1e-6
+MAX_SINGLE_DIM_ABS = 0.95
 
 
 @lru_cache(maxsize=1)
@@ -18,7 +22,28 @@ def get_qdrant_client() -> QdrantClient:
 def validate_embedding(vector: list[float]) -> list[float]:
     if len(vector) != VECTOR_SIZE:
         raise ValueError(f"Embedding must have {VECTOR_SIZE} dimensions")
-    return [float(value) for value in vector]
+
+    values = []
+    for index, value in enumerate(vector):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Embedding value at index {index} is not numeric") from exc
+        if not math.isfinite(numeric):
+            raise ValueError(f"Embedding value at index {index} is not finite")
+        values.append(numeric)
+
+    norm = math.sqrt(sum(value * value for value in values))
+    if norm < MIN_EMBEDDING_NORM:
+        raise ValueError("Embedding norm is too small")
+
+    normalized = [value / norm for value in values]
+    active_dims = sum(1 for value in normalized if abs(value) > 1e-4)
+    max_abs = max(abs(value) for value in normalized)
+    if active_dims < MIN_ACTIVE_DIMS or max_abs > MAX_SINGLE_DIM_ABS:
+        raise ValueError("Embedding appears sparse or dummy; real face embedding required")
+
+    return normalized
 
 
 def ensure_face_collection() -> bool:
