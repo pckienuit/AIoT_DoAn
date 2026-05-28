@@ -53,8 +53,8 @@ async function runONNXSession(session, inputTensor) {
   return outputs[session.outputNames[0]];
 }
 
-function createFloat32Tensor(canvas, size) {
-  const ctx = canvas.getContext("2d");
+function createTensorV9(canvas) {
+  const size = 224;
   const tmp = document.createElement("canvas");
   tmp.width = size; tmp.height = size;
   const tctx = tmp.getContext("2d");
@@ -62,10 +62,33 @@ function createFloat32Tensor(canvas, size) {
   const imageData = tctx.getImageData(0, 0, size, size);
   const data = imageData.data;
   const floatData = new Float32Array(size * size * 3);
-  for (let i = 0; i < size * size; i++) {
-    floatData[i]           = (data[i * 4] / 255.0 - 0.5) * 2;
-    floatData[i + size**2] = (data[i * 4 + 1] / 255.0 - 0.5) * 2;
-    floatData[i + size**2 * 2] = (data[i * 4 + 2] / 255.0 - 0.5) * 2;
+  const area = size * size;
+  let j = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    floatData[j]            = data[i] / 255.0;
+    floatData[j + area]     = data[i + 1] / 255.0;
+    floatData[j + 2 * area] = data[i + 2] / 255.0;
+    j++;
+  }
+  return new ort.Tensor("float32", floatData, [1, 3, size, size]);
+}
+
+function createTensorP3(canvas) {
+  const size = 112;
+  const tmp = document.createElement("canvas");
+  tmp.width = size; tmp.height = size;
+  const tctx = tmp.getContext("2d");
+  tctx.drawImage(canvas, 0, 0, size, size);
+  const imageData = tctx.getImageData(0, 0, size, size);
+  const data = imageData.data;
+  const floatData = new Float32Array(size * size * 3);
+  const area = size * size;
+  let j = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    floatData[j]            = (data[i] - 127.5) / 128.0;
+    floatData[j + area]     = (data[i + 1] - 127.5) / 128.0;
+    floatData[j + 2 * area] = (data[i + 2] - 127.5) / 128.0;
+    j++;
   }
   return new ort.Tensor("float32", floatData, [1, 3, size, size]);
 }
@@ -168,7 +191,7 @@ export class FaceCapture {
 
     // Step 2: V9 landmark extraction
     const { canvas: v9InputCanvas, cropX, cropY, cropW, cropH } = this._alignFace(source, box);
-    const v9Tensor = createFloat32Tensor(v9InputCanvas, 224);
+    const v9Tensor = createTensorV9(v9InputCanvas);
     
     // Run V9 model to extract landmarks and class score
     const v9Outputs = await this._sessionV9.run({ [this._sessionV9.inputNames[0]]: v9Tensor });
@@ -183,10 +206,10 @@ export class FaceCapture {
     }
     
     const v9Landmarks = Array.from(v9Outputs[landmarkKey].data);
-
+ 
     // Step 3: Landmark alignment (P3 Crop 112x112 from original source)
     const p3InputCanvas = this._alignFaceWithLandmarks(source, v9Landmarks, cropX, cropY, cropW, cropH);
-    const p3Tensor = createFloat32Tensor(p3InputCanvas, 112);
+    const p3Tensor = createTensorP3(p3InputCanvas);
     const p3Output = await runONNXSession(this._sessionP3, p3Tensor);
     const p3Vector = Array.from(p3Output.data);
 

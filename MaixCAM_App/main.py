@@ -83,12 +83,12 @@ DETECT_IOU   = 0.45
 LM_THRESH    = 0.50
 LM_ALPHA     = 0.35
 RECOG_THRESH = CFG.get("match_threshold", 0.016)
-CONFIRM_FRAMES_REQUIRED = 3  # Yêu cầu N frame liên tiếp match cùng 1 người
+CONFIRM_FRAMES_REQUIRED = 2  # Yêu cầu N frame liên tiếp match cùng 1 người
 REGISTER_FRAMES = 7
-AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 3)))
-RECOG_FRAME_INTERVAL = max(1, int(CFG.get("recognition_frame_interval", 9)))
+AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 2)))
+RECOG_FRAME_INTERVAL = max(1, int(CFG.get("recognition_frame_interval", 4)))
 OVERLAY_CACHE_TTL_SEC = float(CFG.get("overlay_cache_ttl_sec", 1.0))
-RECOG_CACHE_TTL_SEC = float(CFG.get("recognition_cache_ttl_sec", 1.5))
+RECOG_CACHE_TTL_SEC = float(CFG.get("recognition_cache_ttl_sec", 2.5))
 
 LM_NAMES  = ["LE", "RE", "N", "LM", "RM"]
 LM_COLORS = [

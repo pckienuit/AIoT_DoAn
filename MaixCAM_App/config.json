@@ -5,15 +5,15 @@
   ],
   "sync_interval_sec": 300,
   "cache_dir": "/root/cache",
-  "match_threshold": 0.016,
+  "match_threshold": 0.020,
   "api_timeout_sec": 5,
   "fallback_enabled": true,
   "enable_lcd": false,
   "device_secret_key": "d3v1c3_s3cr3t_ke",
   "stream_fps_limit": 15,
   "stream_jpeg_quality": 75,
-  "ai_frame_interval": 3,
-  "recognition_frame_interval": 9,
+  "ai_frame_interval": 2,
+  "recognition_frame_interval": 4,
   "overlay_cache_ttl_sec": 1.0,
-  "recognition_cache_ttl_sec": 1.5
+  "recognition_cache_ttl_sec": 2.5
 }

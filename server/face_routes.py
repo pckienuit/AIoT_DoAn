@@ -11,6 +11,7 @@ from server.vector_service import (
     scroll_flight_embeddings,
     upsert_face_embedding,
     validate_embedding,
+    delete_face_embedding,
 )
 from server.crypto_service import (
     decrypt_aes_gcm_vector,
@@ -75,6 +76,16 @@ def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
         )
 
     booking = get_booking(payload.booking_id)
+    
+    # Delete old face embedding from Qdrant if exists to prevent orphans / duplicates
+    old_point_id = booking.get("qdrant_point_id")
+    if old_point_id:
+        try:
+            delete_face_embedding(old_point_id)
+        except Exception as exc:
+            # Log error but don't block registration
+            print(f"[face_register] Warning: failed to delete old point {old_point_id}: {exc}")
+
     point_id = str(uuid4())
     face_payload = build_face_payload(booking)
     upsert_face_embedding(point_id, vector, face_payload)

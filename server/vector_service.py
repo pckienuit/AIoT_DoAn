@@ -97,6 +97,17 @@ def get_vector_status() -> dict[str, object]:
     }
 
 
+def delete_face_embedding(point_id: str) -> None:
+    """Delete a specific face embedding by point_id from Qdrant."""
+    client = get_qdrant_client()
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=models.PointIdsList(
+            points=[point_id]
+        )
+    )
+
+
 def delete_flight_embeddings(flight_id: int) -> int:
     """Delete all face embeddings for a flight. Returns count of deleted points."""
     client = get_qdrant_client()
