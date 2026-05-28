@@ -1,14 +1,31 @@
-*dataset*
+# Local secrets and environments
 .env
+/.venv/
+/.venv-tpu310/
+
+# Python cache and tooling
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and local tooling
 .vscode/
+.codegraph/
+
+# Runtime logs and databases
+*.log
+*.db
+*.db-*
+*.db.bak
+*.sqlite
+*.sqlite3
+
+# Large generated data/model artifacts
+*dataset*
+*.zip
 models/checkpoints/
 models/exports/
-.env
-/.venv
-/.venv-tpu310
-*.log
