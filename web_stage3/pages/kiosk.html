@@ -270,6 +270,7 @@
     faceCapture.init().catch(err => {
       kioskStatus.textContent = "Lỗi tải mô hình AI: " + err.message;
       kioskStatus.style.color = "var(--danger)";
+      toggleKioskBtn.disabled = true;
     });
 
     toggleKioskBtn.addEventListener("click", async () => {

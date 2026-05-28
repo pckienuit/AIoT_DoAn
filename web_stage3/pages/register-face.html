@@ -293,6 +293,8 @@
       faceCaptureInstance.init().catch(err => {
         cameraStatus.textContent = "Lỗi khi tải mô hình AI: " + err.message;
         cameraStatus.style.color = "var(--danger)";
+        document.getElementById("captureBtn").disabled = true;
+        document.getElementById("startCameraBtn").disabled = true;
       });
     }
 

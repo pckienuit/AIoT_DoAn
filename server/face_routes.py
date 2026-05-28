@@ -1,8 +1,9 @@
+import math
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from server.database import get_connection
 from server.routes import _fetch_one, get_booking
@@ -21,6 +22,13 @@ from server.crypto_service import (
 
 router = APIRouter(prefix="/api", tags=["face"])
 MATCH_DISTANCE_THRESHOLD = 0.020
+
+
+def clamp_match_threshold(value: float) -> float:
+    threshold = float(value)
+    if not math.isfinite(threshold):
+        raise ValueError("Match threshold must be finite")
+    return max(0.0, min(threshold, MATCH_DISTANCE_THRESHOLD))
 
 
 class FaceRegisterRequest(BaseModel):
@@ -65,15 +73,17 @@ def register_face(payload: FaceRegisterRequest) -> dict[str, Any]:
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"AES-GCM decryption failed: {str(exc)}") from exc
     elif payload.embedding is not None:
-        try:
-            vector = validate_embedding(payload.embedding)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        vector = payload.embedding
     else:
         raise HTTPException(
             status_code=422,
             detail="Either encrypted vector (ciphertext + iv) or plaintext embedding must be provided",
         )
+
+    try:
+        vector = validate_embedding(vector)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     booking = get_booking(payload.booking_id)
     
@@ -123,6 +133,7 @@ def match_face(payload: FaceMatchRequest) -> dict[str, Any]:
         )
 
     try:
+        threshold = clamp_match_threshold(payload.threshold)
         results = search_face_embedding(vector, payload.flight_id, limit=1)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -133,13 +144,14 @@ def match_face(payload: FaceMatchRequest) -> dict[str, Any]:
     hit = results[0]
     score = float(hit.score)
     distance = 1.0 - score
-    matched = distance <= payload.threshold
+    matched = distance <= threshold
     booking = get_booking(int(hit.payload["booking_id"])) if matched else None
     return {
         "matched": matched,
         "distance": distance,
         "score": score,
-        "threshold": payload.threshold,
+        "threshold": threshold,
+        "requested_threshold": payload.threshold,
         "point_id": str(hit.id),
         "booking": booking,
     }

@@ -12,7 +12,7 @@ DEFAULTS = {
     "flight_ids": [1],          # List of flight IDs to sync
     "sync_interval_sec": 300,   # Sync every 5 minutes
     "cache_dir": "/root/cache", # SD card cache directory
-    "match_threshold": 0.045,   # Cosine distance threshold
+    "match_threshold": 0.020,   # Cosine distance threshold
     "api_timeout_sec": 5,       # HTTP timeout for API calls
     "fallback_enabled": True,   # Call server API on cache miss
     "stream_fps_limit": 15,     # Max FPS for web streaming

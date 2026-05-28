@@ -10,4 +10,5 @@ models/checkpoints/
 models/exports/
 .env
 /.venv
+/.venv-tpu310
 *.log

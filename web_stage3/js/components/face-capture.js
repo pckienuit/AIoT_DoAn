@@ -19,6 +19,13 @@ const BURST_BEST_COUNT = 7;
 const BRIGHTNESS_MIN = 20;
 const BRIGHTNESS_MAX = 230;
 const POSE_TOLERANCE = 15;
+const ARCFACE_REFERENCE_POINTS = [
+  [38.2946, 51.6963],
+  [73.5318, 51.5014],
+  [56.0252, 71.7366],
+  [41.5493, 92.3655],
+  [70.7299, 92.2041],
+];
 
 // ---------------------------------------------------------------------------
 // Crypto helpers
@@ -103,6 +110,60 @@ function l2Normalize(vec) {
   return vec.map(v => v / norm);
 }
 
+function getSourceDimensions(source) {
+  return {
+    width: source.videoWidth || source.naturalWidth || source.width || 224,
+    height: source.videoHeight || source.naturalHeight || source.height || 224,
+  };
+}
+
+function estimateSimilarityTransform(sourcePoints, targetPoints) {
+  if (sourcePoints.length !== targetPoints.length || sourcePoints.length < 2) return null;
+
+  const count = sourcePoints.length;
+  let srcMeanX = 0;
+  let srcMeanY = 0;
+  let dstMeanX = 0;
+  let dstMeanY = 0;
+
+  for (let i = 0; i < count; i++) {
+    srcMeanX += sourcePoints[i][0];
+    srcMeanY += sourcePoints[i][1];
+    dstMeanX += targetPoints[i][0];
+    dstMeanY += targetPoints[i][1];
+  }
+
+  srcMeanX /= count;
+  srcMeanY /= count;
+  dstMeanX /= count;
+  dstMeanY /= count;
+
+  let den = 0;
+  let aNum = 0;
+  let bNum = 0;
+
+  for (let i = 0; i < count; i++) {
+    const x = sourcePoints[i][0] - srcMeanX;
+    const y = sourcePoints[i][1] - srcMeanY;
+    const u = targetPoints[i][0] - dstMeanX;
+    const v = targetPoints[i][1] - dstMeanY;
+
+    den += x * x + y * y;
+    aNum += u * x + v * y;
+    bNum += v * x - u * y;
+  }
+
+  if (den < 1e-6) return null;
+
+  const a = aNum / den;
+  const b = bNum / den;
+  const tx = dstMeanX - a * srcMeanX + b * srcMeanY;
+  const ty = dstMeanY - b * srcMeanX - a * srcMeanY;
+
+  if (![a, b, tx, ty].every(Number.isFinite)) return null;
+  return { a, b, tx, ty };
+}
+
 // ---------------------------------------------------------------------------
 // FaceCapture class
 // ---------------------------------------------------------------------------
@@ -136,10 +197,11 @@ export class FaceCapture {
         "/models/exports/face_recognize_arcface_p3.onnx"
       );
     } catch (e) {
-      console.warn("Failed to load real ONNX models, falling back to dummy embedding.", e);
-      // Models not available — use fallback unit embedding
       this._sessionV9 = null;
       this._sessionP3 = null;
+      this._initialized = false;
+      const detail = e?.message || String(e);
+      throw new Error(`Không tải được mô hình ONNX nhận diện khuôn mặt: ${detail}`);
     }
 
     // Load MediaPipe Face Detection
@@ -175,10 +237,7 @@ export class FaceCapture {
     await this.init();
 
     if (!this._sessionV9 || !this._sessionP3) {
-      this._onStatus("Models not available — using fallback embedding.");
-      const fallback = this._createUnitEmbedding();
-      this._lastEmbedding = fallback;
-      return { embedding: fallback, quality: 1.0, source: "fallback" };
+      throw new Error("Mô hình nhận diện chưa sẵn sàng. Không thể tạo embedding giả.");
     }
 
     // Step 1: Face detection
@@ -187,7 +246,7 @@ export class FaceCapture {
       throw new Error("No face detected");
     }
 
-    const { box, landmarks } = detectionResult;
+    const { box } = detectionResult;
 
     // Step 2: V9 landmark extraction
     const { canvas: v9InputCanvas, cropX, cropY, cropW, cropH } = this._alignFace(source, box);
@@ -245,8 +304,7 @@ export class FaceCapture {
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, 224, 224);
 
-    const w = source.videoWidth || source.width || 224;
-    const h = source.videoHeight || source.height || 224;
+    const { width: w, height: h } = getSourceDimensions(source);
 
     // Bounding Box to Pixels
     let x, y, bw, bh;
@@ -284,30 +342,19 @@ export class FaceCapture {
   }
 
   _alignFaceWithLandmarks(source, landmarks, cropX, cropY, cropW, cropH) {
-    const w = source.videoWidth || source.width || 224;
-    const h = source.videoHeight || source.height || 224;
+    const { width: w, height: h } = getSourceDimensions(source);
 
     const lmAbs = [];
     for (let i = 0; i < 5; i++) {
       const lx = landmarks[i * 2] * cropW + cropX;
       const ly = landmarks[i * 2 + 1] * cropH + cropY;
-      lmAbs.push(lx, ly);
+      lmAbs.push([lx, ly]);
     }
 
-    const xs = [lmAbs[0], lmAbs[2], lmAbs[4], lmAbs[6], lmAbs[8]];
-    const ys = [lmAbs[1], lmAbs[3], lmAbs[5], lmAbs[7], lmAbs[9]];
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const centerX = xs.reduce((a, b) => a + b, 0) / 5.0;
-    const centerY = ys.reduce((a, b) => a + b, 0) / 5.0;
-
-    const faceW = maxX - minX;
-    const faceH = maxY - minY;
-    const side = Math.max(faceW * 2.4, faceH * 2.0, 64);
-    const recogCropX = centerX - side / 2;
-    const recogCropY = centerY - side * 0.45;
+    const transform = estimateSimilarityTransform(lmAbs, ARCFACE_REFERENCE_POINTS);
+    if (!transform) {
+      throw new Error("Không thể căn chỉnh khuôn mặt bằng 5 điểm mốc.");
+    }
 
     const dstCanvas = document.createElement("canvas");
     dstCanvas.width = 112;
@@ -315,19 +362,20 @@ export class FaceCapture {
     const ctx = dstCanvas.getContext("2d");
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, 112, 112);
+    ctx.imageSmoothingEnabled = true;
 
-    const rSrcX = Math.max(0, recogCropX);
-    const rSrcY = Math.max(0, recogCropY);
-    const rSrcW = Math.min(w - rSrcX, recogCropX + side - rSrcX);
-    const rSrcH = Math.min(h - rSrcY, recogCropY + side - rSrcY);
+    ctx.save();
+    ctx.setTransform(
+      transform.a,
+      transform.b,
+      -transform.b,
+      transform.a,
+      transform.tx,
+      transform.ty
+    );
+    ctx.drawImage(source, 0, 0, w, h);
+    ctx.restore();
 
-    if (rSrcW > 0 && rSrcH > 0) {
-      const rDstX = (rSrcX - recogCropX) * (112 / side);
-      const rDstY = (rSrcY - recogCropY) * (112 / side);
-      const rDstW = rSrcW * (112 / side);
-      const rDstH = rSrcH * (112 / side);
-      ctx.drawImage(source, rSrcX, rSrcY, rSrcW, rSrcH, rDstX, rDstY, rDstW, rDstH);
-    }
     return dstCanvas;
   }
 
@@ -342,12 +390,6 @@ export class FaceCapture {
     const brightness = sum / count;
     if (brightness < BRIGHTNESS_MIN || brightness > BRIGHTNESS_MAX) return 0.5;
     return box.score ? box.score[0] : 0.8;
-  }
-
-  _createUnitEmbedding() {
-    const vec = new Array(128).fill(0);
-    vec[0] = 1;
-    return l2Normalize(vec);
   }
 
   async encryptEmbedding(vector) {
@@ -375,13 +417,17 @@ export class FaceCapture {
    * Burst capture: capture `BURST_FRAMES` frames, pick `BURST_BEST_COUNT` best by quality.
    */
   async captureBurst(videoEl) {
+    await this.init();
     this._burstQueue = [];
     const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    let lastError = null;
     for (let i = 0; i < BURST_FRAMES; i++) {
       try {
         const result = await this.extractEmbeddingFromSource(videoEl);
         if (result) this._burstQueue.push(result);
-      } catch { /* skip failed frames */ }
+      } catch (err) {
+        lastError = err;
+      }
       await delay(80);
     }
 
@@ -390,7 +436,8 @@ export class FaceCapture {
     const best = this._burstQueue.slice(0, BURST_BEST_COUNT);
 
     if (!best.length) {
-      throw new Error("No quality frames captured");
+      const reason = lastError?.message ? `: ${lastError.message}` : "";
+      throw new Error(`No quality frames captured${reason}`);
     }
 
     // Average embeddings

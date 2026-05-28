@@ -77,12 +77,19 @@ MODEL_W      = 224
 MODEL_H      = 224
 RECOG_W      = 112
 RECOG_H      = 112
+ARCFACE_REFERENCE_POINTS = (
+    (38.2946, 51.6963),
+    (73.5318, 51.5014),
+    (56.0252, 71.7366),
+    (41.5493, 92.3655),
+    (70.7299, 92.2041),
+)
 
 DETECT_CONF  = 0.40
 DETECT_IOU   = 0.45
 LM_THRESH    = 0.50
 LM_ALPHA     = 0.35
-RECOG_THRESH = CFG.get("match_threshold", 0.016)
+RECOG_THRESH = CFG.get("match_threshold", 0.020)
 CONFIRM_FRAMES_REQUIRED = 2  # Yêu cầu N frame liên tiếp match cùng 1 người
 REGISTER_FRAMES = 7
 AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 2)))
@@ -234,22 +241,137 @@ def make_v9_input(face_crop):
     return canvas
 
 
+def estimate_similarity_transform(lm_abs):
+    src = [(float(lm_abs[i * 2]), float(lm_abs[i * 2 + 1])) for i in range(5)]
+    dst = ARCFACE_REFERENCE_POINTS
+    count = 5
+
+    src_mean_x = sum(p[0] for p in src) / count
+    src_mean_y = sum(p[1] for p in src) / count
+    dst_mean_x = sum(p[0] for p in dst) / count
+    dst_mean_y = sum(p[1] for p in dst) / count
+
+    den = 0.0
+    a_num = 0.0
+    b_num = 0.0
+    for i in range(count):
+        x = src[i][0] - src_mean_x
+        y = src[i][1] - src_mean_y
+        u = dst[i][0] - dst_mean_x
+        v = dst[i][1] - dst_mean_y
+        den += x * x + y * y
+        a_num += u * x + v * y
+        b_num += v * x - u * y
+
+    if den < 1e-6:
+        return None
+
+    a = a_num / den
+    b = b_num / den
+    tx = dst_mean_x - a * src_mean_x + b * src_mean_y
+    ty = dst_mean_y - b * src_mean_x - a * src_mean_y
+
+    if not all(math.isfinite(v) for v in (a, b, tx, ty)):
+        return None
+    return a, b, tx, ty
+
+
+def _read_pixel(img, x, y):
+    try:
+        return img.get_pixel(x, y)
+    except Exception:
+        return None
+
+
+def _write_pixel(img, x, y, color):
+    try:
+        img.set_pixel(x, y, color)
+        return True
+    except Exception:
+        pass
+    try:
+        img.draw_pixel(x, y, color)
+        return True
+    except Exception:
+        return False
+
+
+def native_affine_to_arcface(frame, lm_abs):
+    left_eye = (lm_abs[0], lm_abs[1])
+    right_eye = (lm_abs[2], lm_abs[3])
+    mouth_center = (
+        (lm_abs[6] + lm_abs[8]) / 2.0,
+        (lm_abs[7] + lm_abs[9]) / 2.0,
+    )
+    ref_left = ARCFACE_REFERENCE_POINTS[0]
+    ref_right = ARCFACE_REFERENCE_POINTS[1]
+    ref_mouth = (
+        (ARCFACE_REFERENCE_POINTS[3][0] + ARCFACE_REFERENCE_POINTS[4][0]) / 2.0,
+        (ARCFACE_REFERENCE_POINTS[3][1] + ARCFACE_REFERENCE_POINTS[4][1]) / 2.0,
+    )
+
+    src_points = [
+        int(round(left_eye[0])), int(round(left_eye[1])),
+        int(round(right_eye[0])), int(round(right_eye[1])),
+        int(round(mouth_center[0])), int(round(mouth_center[1])),
+    ]
+    dst_points = [
+        int(round(ref_left[0])), int(round(ref_left[1])),
+        int(round(ref_right[0])), int(round(ref_right[1])),
+        int(round(ref_mouth[0])), int(round(ref_mouth[1])),
+    ]
+
+    try:
+        return frame.affine(
+            src_points,
+            dst_points,
+            RECOG_W,
+            RECOG_H,
+            image.ResizeMethod.BILINEAR,
+        )
+    except Exception:
+        try:
+            return frame.affine(src_points, dst_points, RECOG_W, RECOG_H)
+        except Exception:
+            return None
+
+
+def warp_face_to_arcface(frame, lm_abs):
+    aligned = native_affine_to_arcface(frame, lm_abs)
+    if aligned is not None:
+        return aligned
+
+    transform = estimate_similarity_transform(lm_abs)
+    if transform is None:
+        return None
+
+    a, b, tx, ty = transform
+    det = a * a + b * b
+    if det < 1e-8:
+        return None
+
+    dst = image.Image(RECOG_W, RECOG_H, image.Format.FMT_RGB888)
+    max_x = frame.width() - 1
+    max_y = frame.height() - 1
+
+    for dy in range(RECOG_H):
+        for dx in range(RECOG_W):
+            src_x = (a * (dx - tx) + b * (dy - ty)) / det
+            src_y = (-b * (dx - tx) + a * (dy - ty)) / det
+            sx = int(round(src_x))
+            sy = int(round(src_y))
+            sx = max(0, min(max_x, sx))
+            sy = max(0, min(max_y, sy))
+            color = _read_pixel(frame, sx, sy)
+            if color is None or not _write_pixel(dst, dx, dy, color):
+                return None
+
+    return dst
+
+
 def make_recognition_crop(frame, lm_abs):
-    xs = [lm_abs[i * 2]     for i in range(5)]
-    ys = [lm_abs[i * 2 + 1] for i in range(5)]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    center_x = int(sum(xs) / 5.0)
-    center_y = int(sum(ys) / 5.0)
+    return warp_face_to_arcface(frame, lm_abs)
 
-    face_w = max_x - min_x
-    face_h = max_y - min_y
-    side   = int(max(face_w * 2.4, face_h * 2.0, 64))
-    crop_x = int(center_x - side / 2)
-    crop_y = int(center_y - side * 0.45)
-
-    crop = make_crop_with_padding(frame, crop_x, crop_y, side, side)
-    return resize_image(crop, RECOG_W, RECOG_H)
 
 
 def extract_embedding(aligned_face):
@@ -670,6 +792,10 @@ def main():
                             draw_recognition_overlay(img, overlay_cache)
                         else:
                             recog_face = make_recognition_crop(img, lm_abs)
+                            if recog_face is None:
+                                draw_string_ascii(img, x, max(0, y - 15), "align fail", COLOR_DANGER)
+                                continue
+
                             embedding  = extract_embedding(recog_face)
                             if embedding is None:
                                 draw_string_ascii(img, x, max(0, y - 15), "P3 fail", COLOR_DANGER)
