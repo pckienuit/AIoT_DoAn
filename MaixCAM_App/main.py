@@ -80,9 +80,10 @@ RECOG_H      = 112
 
 DETECT_CONF  = 0.40
 DETECT_IOU   = 0.45
-LM_THRESH    = 0.40
+LM_THRESH    = 0.50
 LM_ALPHA     = 0.35
-RECOG_THRESH = CFG.get("match_threshold", 0.018)
+RECOG_THRESH = CFG.get("match_threshold", 0.016)
+CONFIRM_FRAMES_REQUIRED = 3  # Yêu cầu N frame liên tiếp match cùng 1 người
 REGISTER_FRAMES = 7
 AI_FRAME_INTERVAL = max(1, int(CFG.get("ai_frame_interval", 3)))
 RECOG_FRAME_INTERVAL = max(1, int(CFG.get("recognition_frame_interval", 9)))
@@ -299,6 +300,8 @@ def draw_cached_overlay(img, overlay, now):
         draw_target_brackets(img, x, y, w, h, COLOR_OK, thickness=3)
     elif mode == "no_match":
         draw_target_brackets(img, x, y, w, h, COLOR_DANGER, thickness=3)
+    elif mode == "verifying":
+        draw_target_brackets(img, x, y, w, h, COLOR_WARN, thickness=2)
     else:
         draw_target_brackets(img, x, y, w, h, COLOR_PRIMARY, thickness=2)
 
@@ -333,6 +336,8 @@ def draw_cached_overlay(img, overlay, now):
                         COLOR_OK)
     elif mode == "no_match":
         draw_no_match(img, x, y, w, h)
+    elif mode == "verifying":
+        draw_string_ascii(img, x, max(0, y - 18), "Verifying...", COLOR_WARN)
 
     score = overlay.get("score")
     if score is not None:
@@ -372,6 +377,9 @@ def draw_recognition_overlay(img, overlay):
                         COLOR_OK)
     elif mode == "no_match":
         draw_no_match(img, x, y, w, h)
+    elif mode == "verifying":
+        draw_target_brackets(img, x, y, w, h, COLOR_WARN, thickness=2)
+        draw_string_ascii(img, x, max(0, y - 18), "Verifying...", COLOR_WARN)
 
 
 # =====================================================================
@@ -480,6 +488,7 @@ def main():
     frozen_face_img = None
     frozen_result = None
     frozen_x, frozen_y, frozen_w, frozen_h = 0, 0, 0, 0
+    confirm_buffer = []  # List of (point_id, distance) từ N frame gần nhất
 
     try:
         while not app.need_exit() and not _shutdown_requested:
@@ -560,6 +569,7 @@ def main():
                         last_result = None
                         recognition_cache = None
                         overlay_cache = None
+                        confirm_buffer = []
                         draw_status(img, "No face", COLOR_DANGER)
                     else:
                         # Keep showing cached overlay during grace period
@@ -616,6 +626,13 @@ def main():
                             lm_abs.append(lx)
                             lm_abs.append(ly)
                             img.draw_circle(lx, ly, 3, COLOR_ACCENT, -1)
+
+                        left_eye = (lm_abs[0], lm_abs[1])
+                        right_eye = (lm_abs[2], lm_abs[3])
+                        eye_dist = math.sqrt((left_eye[0]-right_eye[0])**2 + (left_eye[1]-right_eye[1])**2)
+                        if eye_dist < 20:  # Khuôn mặt quá nhỏ/xa
+                            draw_string_ascii(img, x, max(0, y - 15), "far", COLOR_DANGER)
+                            continue
 
                         # Draw Face Mesh connecting wireframe lines
                         connections = [(0, 1), (0, 2), (1, 2), (2, 3), (2, 4), (3, 4)]
@@ -682,19 +699,41 @@ def main():
                                     draw_status(img, "Flight {} - Recognition disabled".format(flight_status), COLOR_DANGER)
                                 elif cache_info.get("cached"):
                                     last_result = cache_mgr.match_local(embedding, active_flight)
-                                    overlay_cache["mode"] = "match"
-                                    overlay_cache["result"] = last_result
-                                    recognition_cache["mode"] = "match"
-                                    recognition_cache["result"] = last_result
-                                    draw_match_result(img, last_result, x, y, w, h)
-                                    
                                     if last_result is not None:
-                                        # Successful match: trigger 5-second freeze
-                                        freeze_active = True
-                                        freeze_start_time = now
-                                        frozen_result = last_result
-                                        frozen_face_img = recog_face
-                                        frozen_x, frozen_y, frozen_w, frozen_h = x, y, w, h
+                                        point_id = last_result.get("point_id")
+                                        if confirm_buffer and confirm_buffer[0].get("point_id") != point_id:
+                                            confirm_buffer = []
+                                        confirm_buffer.append(last_result)
+
+                                        if len(confirm_buffer) >= CONFIRM_FRAMES_REQUIRED:
+                                            avg_dist = sum(r["distance"] for r in confirm_buffer) / len(confirm_buffer)
+                                            final_result = last_result.copy()
+                                            final_result["distance"] = avg_dist
+                                            final_result["score"] = 1.0 - avg_dist
+
+                                            overlay_cache["mode"] = "match"
+                                            overlay_cache["result"] = final_result
+                                            recognition_cache["mode"] = "match"
+                                            recognition_cache["result"] = final_result
+                                            draw_match_result(img, final_result, x, y, w, h)
+
+                                            freeze_active = True
+                                            freeze_start_time = now
+                                            frozen_result = final_result
+                                            frozen_face_img = recog_face
+                                            frozen_x, frozen_y, frozen_w, frozen_h = x, y, w, h
+                                            confirm_buffer = []
+                                        else:
+                                            # Verifying phase
+                                            overlay_cache["mode"] = "verifying"
+                                            recognition_cache["mode"] = "verifying"
+                                            draw_target_brackets(img, x, y, w, h, COLOR_WARN, thickness=2)
+                                            draw_string_ascii(img, x, max(0, y - 18), "Verifying...", COLOR_WARN)
+                                    else:
+                                        confirm_buffer = []
+                                        overlay_cache["mode"] = "no_match"
+                                        recognition_cache["mode"] = "no_match"
+                                        draw_no_match(img, x, y, w, h)
                                 else:
                                     # No cache yet: fall back to legacy local DB
                                     identity, dist = match_identity_local_db(embedding, face_db)

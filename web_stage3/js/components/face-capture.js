@@ -167,24 +167,37 @@ export class FaceCapture {
     const { box, landmarks } = detectionResult;
 
     // Step 2: V9 landmark extraction
-    const alignedCanvas = this._alignFace(source, box, landmarks);
-    const v9Tensor = createFloat32Tensor(alignedCanvas, 224);
-    const v9Output = await runONNXSession(this._sessionV9, v9Tensor);
-    const v9Vector = Array.from(v9Output.data);
+    const { canvas: v9InputCanvas, cropX, cropY, cropW, cropH } = this._alignFace(source, box);
+    const v9Tensor = createFloat32Tensor(v9InputCanvas, 224);
+    
+    // Run V9 model to extract landmarks and class score
+    const v9Outputs = await this._sessionV9.run({ [this._sessionV9.inputNames[0]]: v9Tensor });
+    const classKey = this._sessionV9.outputNames.find(n => n.includes('class')) || this._sessionV9.outputNames[0];
+    const landmarkKey = this._sessionV9.outputNames.find(n => n.includes('landmark')) || this._sessionV9.outputNames[2] || this._sessionV9.outputNames[1];
+    
+    const scoreRaw = v9Outputs[classKey].data[0];
+    const score = 1.0 / (1.0 + Math.exp(-scoreRaw));
+    
+    if (score < 0.40) {
+      throw new Error(`Khuôn mặt không rõ nét hoặc quá nghiêng (score: ${score.toFixed(2)})`);
+    }
+    
+    const v9Landmarks = Array.from(v9Outputs[landmarkKey].data);
 
-    // Step 3: ArcFace P3 embedding
-    const p3Tensor = createFloat32Tensor(alignedCanvas, 112);
+    // Step 3: Landmark alignment (P3 Crop 112x112 from original source)
+    const p3InputCanvas = this._alignFaceWithLandmarks(source, v9Landmarks, cropX, cropY, cropW, cropH);
+    const p3Tensor = createFloat32Tensor(p3InputCanvas, 112);
     const p3Output = await runONNXSession(this._sessionP3, p3Tensor);
     const p3Vector = Array.from(p3Output.data);
 
     const embedding = l2Normalize(p3Vector);
-    const quality = this._assessQuality(alignedCanvas, box);
+    const quality = this._assessQuality(v9InputCanvas, box);
 
     this._lastEmbedding = embedding;
     this._onEmbedding(embedding);
     this._onQuality(quality);
 
-    return { embedding, quality, source: "live", canvas: alignedCanvas };
+    return { embedding, quality, source: "live", canvas: p3InputCanvas };
   }
 
   async _runDetection(source) {
@@ -202,22 +215,97 @@ export class FaceCapture {
     });
   }
 
-  _alignFace(source, box, landmarks) {
+  _alignFace(source, box) {
     const canvas = document.createElement("canvas");
     canvas.width = 224; canvas.height = 224;
     const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, 224, 224);
 
     const w = source.videoWidth || source.width || 224;
     const h = source.videoHeight || source.height || 224;
 
-    // Use bounding box for simple crop
-    const x = Math.max(0, box.xCenter * w - box.width * w / 2);
-    const y = Math.max(0, box.yCenter * h - box.height * h / 2);
-    const bw = Math.min(box.width * w, w - x);
-    const bh = Math.min(box.height * h, h - y);
+    // Bounding Box to Pixels
+    let x, y, bw, bh;
+    if (box.xCenter !== undefined) {
+      bw = box.width * w;
+      bh = box.height * h;
+      x = box.xCenter * w - bw / 2;
+      y = box.yCenter * h - bh / 2;
+    } else {
+      x = box.xMin * w;
+      y = box.yMin * h;
+      bw = box.width * w;
+      bh = box.height * h;
+    }
 
-    ctx.drawImage(source, x, y, bw, bh, 0, 0, 224, 224);
-    return canvas;
+    // Adaptive padding based on CelebA crop ratio (178 x 218)
+    const cropW = bw * 1.5;
+    const cropH = bh * 1.8;
+    const cropX = x + bw / 2 - cropW / 2;
+    const cropY = y + bh * 0.4 - cropH * 0.51;
+
+    const sX = Math.max(0, cropX);
+    const sY = Math.max(0, cropY);
+    const sW = Math.min(w - sX, cropX + cropW - sX);
+    const sH = Math.min(h - sY, cropY + cropH - sY);
+
+    if (sW > 0 && sH > 0) {
+      const dX = (sX - cropX) * (224 / cropW);
+      const dY = (sY - cropY) * (224 / cropH);
+      const dW = sW * (224 / cropW);
+      const dH = sH * (224 / cropH);
+      ctx.drawImage(source, sX, sY, sW, sH, dX, dY, dW, dH);
+    }
+    return { canvas, cropX, cropY, cropW, cropH };
+  }
+
+  _alignFaceWithLandmarks(source, landmarks, cropX, cropY, cropW, cropH) {
+    const w = source.videoWidth || source.width || 224;
+    const h = source.videoHeight || source.height || 224;
+
+    const lmAbs = [];
+    for (let i = 0; i < 5; i++) {
+      const lx = landmarks[i * 2] * cropW + cropX;
+      const ly = landmarks[i * 2 + 1] * cropH + cropY;
+      lmAbs.push(lx, ly);
+    }
+
+    const xs = [lmAbs[0], lmAbs[2], lmAbs[4], lmAbs[6], lmAbs[8]];
+    const ys = [lmAbs[1], lmAbs[3], lmAbs[5], lmAbs[7], lmAbs[9]];
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const centerX = xs.reduce((a, b) => a + b, 0) / 5.0;
+    const centerY = ys.reduce((a, b) => a + b, 0) / 5.0;
+
+    const faceW = maxX - minX;
+    const faceH = maxY - minY;
+    const side = Math.max(faceW * 2.4, faceH * 2.0, 64);
+    const recogCropX = centerX - side / 2;
+    const recogCropY = centerY - side * 0.45;
+
+    const dstCanvas = document.createElement("canvas");
+    dstCanvas.width = 112;
+    dstCanvas.height = 112;
+    const ctx = dstCanvas.getContext("2d");
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, 112, 112);
+
+    const rSrcX = Math.max(0, recogCropX);
+    const rSrcY = Math.max(0, recogCropY);
+    const rSrcW = Math.min(w - rSrcX, recogCropX + side - rSrcX);
+    const rSrcH = Math.min(h - rSrcY, recogCropY + side - rSrcY);
+
+    if (rSrcW > 0 && rSrcH > 0) {
+      const rDstX = (rSrcX - recogCropX) * (112 / side);
+      const rDstY = (rSrcY - recogCropY) * (112 / side);
+      const rDstW = rSrcW * (112 / side);
+      const rDstH = rSrcH * (112 / side);
+      ctx.drawImage(source, rSrcX, rSrcY, rSrcW, rSrcH, rDstX, rDstY, rDstW, rDstH);
+    }
+    return dstCanvas;
   }
 
   _assessQuality(canvas, box) {

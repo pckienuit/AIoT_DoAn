@@ -183,7 +183,7 @@ async function apiFaceRegister(payload) {
   });
 }
 
-async function apiFaceMatch(flightId, embedding, threshold = 0.028) {
+async function apiFaceMatch(flightId, embedding, threshold = 0.020) {
   return apiRequest("/api/face/match", {
     method: "POST",
     body: JSON.stringify({ flight_id: flightId, embedding, threshold }),

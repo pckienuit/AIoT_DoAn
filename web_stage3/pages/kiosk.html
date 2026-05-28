@@ -321,26 +321,64 @@
         kioskCameraBox.className = "kiosk-camera-box scanning";
         
         // Quick 1-frame extraction to see if face exists
-        const result = await faceCapture.extractEmbeddingFromSource(kioskVideo);
-        
-        if (result && result.embedding) {
-          kioskCameraBox.className = "kiosk-camera-box matching";
-          kioskStatus.textContent = "⌛ Phát hiện khuôn mặt! Đang đối sánh cơ sở dữ liệu...";
-          kioskStatus.style.color = "var(--warn)";
+        const firstResult = await faceCapture.extractEmbeddingFromSource(kioskVideo);
+        if (!firstResult || !firstResult.embedding) return;
 
-          // Query vector database without flight_id (global search)
-          const match = await apiFaceMatch(null, result.embedding);
-          
-          if (match && match.matched && match.booking) {
-            showResult(match.booking);
-          } else {
-            kioskStatus.textContent = "⚠️ Khuôn mặt không khớp với vé nào. Hãy đăng ký trước!";
-            kioskStatus.style.color = "var(--danger)";
-            kioskCameraBox.className = "kiosk-camera-box scanning";
+        kioskCameraBox.className = "kiosk-camera-box matching";
+        kioskStatus.textContent = "⌛ Phát hiện khuôn mặt! Đang thu thập dữ liệu (1/3)...";
+        kioskStatus.style.color = "var(--warn)";
+
+        const frames = [firstResult.embedding];
+
+        // Capture 2 more frames
+        for (let i = 1; i < 3; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          if (!isKioskRunning || isShowingResult) return;
+          try {
+            kioskStatus.textContent = `⌛ Phát hiện khuôn mặt! Đang thu thập dữ liệu (${i+1}/3)...`;
+            const r = await faceCapture.extractEmbeddingFromSource(kioskVideo);
+            if (r && r.embedding) {
+              frames.push(r.embedding);
+            }
+          } catch (e) {
+            // Ignore single frame failure
           }
         }
+
+        if (frames.length < 2) {
+          kioskStatus.textContent = "⚠️ Không đủ khung hình chất lượng. Vui lòng nhìn thẳng camera.";
+          kioskStatus.style.color = "var(--danger)";
+          kioskCameraBox.className = "kiosk-camera-box scanning";
+          return;
+        }
+
+        kioskStatus.textContent = "⌛ Đang đối sánh cơ sở dữ liệu...";
+
+        // Average + L2 normalize
+        const avg = new Array(128).fill(0);
+        for (const emb of frames) {
+          for (let i = 0; i < 128; i++) {
+            avg[i] += emb[i];
+          }
+        }
+        for (let i = 0; i < 128; i++) {
+          avg[i] /= frames.length;
+        }
+        const norm = Math.sqrt(avg.reduce((s, v) => s + v * v, 0));
+        const finalVec = norm < 1e-10 ? avg : avg.map(v => v / norm);
+
+        // Query vector database without flight_id (global search)
+        const match = await apiFaceMatch(null, finalVec);
+        
+        if (match && match.matched && match.booking) {
+          showResult(match.booking);
+        } else {
+          kioskStatus.textContent = "⚠️ Khuôn mặt không khớp với vé nào. Hãy đăng ký trước!";
+          kioskStatus.style.color = "var(--danger)";
+          kioskCameraBox.className = "kiosk-camera-box scanning";
+        }
       } catch (err) {
-        // No face detected, keep scanning silently
+        // No face detected or other error, keep scanning silently
         kioskStatus.textContent = "🔍 Đang chờ hành khách đứng trước camera...";
         kioskStatus.style.color = "var(--signal)";
       }
